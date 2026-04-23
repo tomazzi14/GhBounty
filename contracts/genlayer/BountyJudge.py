@@ -25,26 +25,36 @@ WEIGHT_SECURITY = 15
 
 
 def _score_dimension(dimension: str, opus_section: str) -> int:
-    prompt = (
-        f"You are a code reviewer judging a Pull Request on ONE dimension only: {dimension}.\n"
-        f"Below is an analysis written by a senior engineer for this dimension:\n"
-        f"---\n{opus_section}\n---\n\n"
-        f"Based ONLY on that analysis, emit an integer score from 1 to 10 for {dimension}.\n"
-        f"Respond with EXACTLY this JSON and nothing else:\n"
-        f'{{"score": <int 1-10>}}'
-    )
+    task = f"""
+You are a code reviewer judging a Pull Request on ONE dimension only: {dimension}.
 
-    def call_llm() -> str:
-        raw = gl.nondet.exec_prompt(prompt)
-        cleaned = raw.replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(cleaned)
-        score = int(parsed["score"])
-        if not 1 <= score <= 10:
-            raise ValueError(f"score out of range for {dimension}: {score}")
-        return json.dumps({"score": score}, sort_keys=True)
+Below is an analysis written by a senior engineer for this dimension:
+---
+{opus_section}
+---
+
+Based ONLY on that analysis, emit an integer score from 1 to 10 for {dimension}.
+
+Respond with the following JSON format:
+{{
+    "score": int  // The score as an integer from 1 to 10.
+}}
+It is mandatory that you respond only using the JSON format above,
+nothing else. Don't include any other words or characters,
+your output must be only JSON without any formatting prefix or suffix.
+This result should be perfectly parsable by a JSON parser without errors.
+"""
+
+    def call_llm() -> dict:
+        raw = gl.nondet.exec_prompt(task).replace("```json", "").replace("```", "")
+        return json.loads(raw)
 
     consensed = gl.eq_principle.strict_eq(call_llm)
-    return int(json.loads(consensed)["score"])
+
+    score = int(consensed["score"])
+    if not 1 <= score <= 10:
+        raise gl.vm.UserError(f"score out of range for {dimension}: {score}")
+    return score
 
 
 class BountyJudge(gl.Contract):
