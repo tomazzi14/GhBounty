@@ -29,6 +29,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install ruff pytest
+      - run: pip install ruff pytest genlayer-test
       - run: ruff check bounty_judge/contracts
       - run: pytest bounty_judge/tests
