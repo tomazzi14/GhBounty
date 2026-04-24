@@ -1,0 +1,19 @@
+use anchor_lang::prelude::*;
+
+#[error_code]
+pub enum EscrowError {
+    #[msg("Bounty amount must be greater than zero")]
+    ZeroAmount,
+    #[msg("URL exceeds maximum length")]
+    UrlTooLong,
+    #[msg("Bounty is not in the Open state")]
+    BountyNotOpen,
+    #[msg("Only the bounty creator can perform this action")]
+    UnauthorizedCreator,
+    #[msg("Submission does not belong to this bounty")]
+    SubmissionMismatch,
+    #[msg("Score must be between 1 and 10")]
+    ScoreOutOfRange,
+    #[msg("Score has already been set on this submission")]
+    ScoreAlreadySet,
+}
