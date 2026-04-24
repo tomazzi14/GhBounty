@@ -1,9 +1,12 @@
-"""Direct-mode tests for BountyJudge.
+"""Direct-mode tests for BountyJudge v0.3.2.
 
 Uses gltest's direct-mode fixtures with mocked LLM responses, so the tests
 exercise the full contract code path (input validation, prompt building,
-JSON parsing, storage mutation, threshold logic, fallback) without spending
-real API credits on the validators.
+JSON parsing, storage mutation, threshold logic) without spending real API
+credits on the validators.
+
+Storage is flattened into parallel TreeMaps of primitives — the GenVM
+rejects TreeMap<str, CustomDataclass> with invalid_contract.
 """
 
 from __future__ import annotations
@@ -17,7 +20,6 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 PASSED = "passed"
 REJECTED = "rejected_by_genlayer"
-FAILED = "failed"
 
 
 def _mock_verdict(
@@ -26,14 +28,9 @@ def _mock_verdict(
     test_coverage: int | None = None,
     requirements_match: int | None = None,
     security: int | None = None,
-    reasoning: str = "stub reasoning",
 ) -> str:
-    """Builds the JSON the validator LLM is expected to emit, wrapped in
-    ```json fences so the contract's .replace(...) logic has something to
-    strip."""
     payload = {
         "score": score,
-        "reasoning": reasoning,
         "dimensions": {
             "code_quality": code_quality if code_quality is not None else score,
             "test_coverage": test_coverage if test_coverage is not None else score,
@@ -56,13 +53,7 @@ def _read_fixture(name: str) -> str:
 class TestDeploy:
     def test_deploy_succeeds(self, direct_vm, direct_deploy):
         contract = direct_deploy(CONTRACT)
-        # Fresh contract has no submissions and fallback is off.
         assert contract.list_submissions() == []
-
-    def test_storage_fallback_defaults_false(self, direct_vm, direct_deploy):
-        contract = direct_deploy(CONTRACT)
-        contract.set_storage_fallback(True)
-        contract.set_storage_fallback(False)
 
 
 # ── Happy paths: passed / rejected ──────────────────────────────────────────
@@ -74,42 +65,34 @@ class TestExcellentPR:
         contract = direct_deploy(CONTRACT)
 
         contract.submit_evaluation(
-            "sub-001",
-            _read_fixture("opus_report_excellent.txt"),
-            "https://github.com/ex/repo/pull/42",
-            "https://github.com/ex/repo/issues/42",
+            "sub-001", _read_fixture("opus_report_excellent.txt")
         )
 
-        result = contract.get_evaluation("sub-001")
-        assert result["status"] == PASSED
-        assert result["score"] == 9
-        assert result["dimensions"]["code_quality"] == 9
-        assert result["dimensions"]["test_coverage"] == 9
-        assert result["opus_report_hash"]  # non-empty
-        assert result["opus_report_hash"] == result["opus_report_hash"]  # deterministic
+        assert contract.get_status("sub-001") == PASSED
+        assert contract.get_score("sub-001") == 9
+        dims = contract.get_dimensions("sub-001")
+        assert dims["code_quality"] == 9
+        assert dims["test_coverage"] == 9
 
 
 class TestMediocrePR:
     def test_score_6_passes_at_threshold(self, direct_vm, direct_deploy):
-        """Threshold is >=6 so exactly 6 should pass."""
         direct_vm.mock_llm(r".*", _mock_verdict(score=6))
         contract = direct_deploy(CONTRACT)
 
         contract.submit_evaluation("sub-002", _read_fixture("opus_report_mediocre.txt"))
-        result = contract.get_evaluation("sub-002")
 
-        assert result["status"] == PASSED
-        assert result["score"] == 6
+        assert contract.get_status("sub-002") == PASSED
+        assert contract.get_score("sub-002") == 6
 
     def test_score_5_rejected_below_threshold(self, direct_vm, direct_deploy):
         direct_vm.mock_llm(r".*", _mock_verdict(score=5))
         contract = direct_deploy(CONTRACT)
 
         contract.submit_evaluation("sub-003", _read_fixture("opus_report_mediocre.txt"))
-        result = contract.get_evaluation("sub-003")
 
-        assert result["status"] == REJECTED
-        assert result["score"] == 5
+        assert contract.get_status("sub-003") == REJECTED
+        assert contract.get_score("sub-003") == 5
 
 
 class TestBrokenPR:
@@ -118,11 +101,10 @@ class TestBrokenPR:
         contract = direct_deploy(CONTRACT)
 
         contract.submit_evaluation("sub-004", _read_fixture("opus_report_broken.txt"))
-        result = contract.get_evaluation("sub-004")
 
-        assert result["status"] == REJECTED
-        assert result["score"] == 3
-        assert result["dimensions"]["test_coverage"] == 1
+        assert contract.get_status("sub-004") == REJECTED
+        assert contract.get_score("sub-004") == 3
+        assert contract.get_dimensions("sub-004")["test_coverage"] == 1
 
 
 class TestMaliciousPR:
@@ -140,11 +122,10 @@ class TestMaliciousPR:
         contract = direct_deploy(CONTRACT)
 
         contract.submit_evaluation("sub-005", _read_fixture("opus_report_malicious.txt"))
-        result = contract.get_evaluation("sub-005")
 
-        assert result["status"] == REJECTED
-        assert result["score"] == 1
-        assert result["dimensions"]["security"] == 1
+        assert contract.get_status("sub-005") == REJECTED
+        assert contract.get_score("sub-005") == 1
+        assert contract.get_dimensions("sub-005")["security"] == 1
 
 
 # ── Input validation ────────────────────────────────────────────────────────
@@ -187,60 +168,50 @@ class TestInputValidation:
 
 
 class TestMalformedValidatorOutput:
-    """The contract catches validator-side errors (invalid JSON, bad shape,
-    out-of-range scores) and records the submission as `failed` with a
-    reason, rather than reverting. This keeps the storage write predictable
-    and prevents a validator with buggy output from stalling the pipeline."""
-
-    def test_invalid_json_recorded_as_failed(self, direct_vm, direct_deploy):
+    def test_invalid_json_reverts(self, direct_vm, direct_deploy):
         direct_vm.mock_llm(r".*", "this is definitely not json")
         contract = direct_deploy(CONTRACT)
 
-        contract.submit_evaluation(
-            "sub-009", _read_fixture("opus_report_excellent.txt")
-        )
-        result = contract.get_evaluation("sub-009")
+        with direct_vm.expect_revert():
+            contract.submit_evaluation(
+                "sub-009", _read_fixture("opus_report_excellent.txt")
+            )
 
-        assert result["status"] == FAILED
-        assert result["score"] == 0
-        assert "no consensus" in result["reasoning"]
-
-    def test_out_of_range_score_recorded_as_failed(self, direct_vm, direct_deploy):
+    def test_out_of_range_score_reverts(self, direct_vm, direct_deploy):
         direct_vm.mock_llm(r".*", _mock_verdict(score=11))
         contract = direct_deploy(CONTRACT)
 
-        contract.submit_evaluation(
-            "sub-010", _read_fixture("opus_report_excellent.txt")
-        )
-        result = contract.get_evaluation("sub-010")
+        with direct_vm.expect_revert():
+            contract.submit_evaluation(
+                "sub-010", _read_fixture("opus_report_excellent.txt")
+            )
 
-        assert result["status"] == FAILED
-        assert result["score"] == 0
-
-    def test_missing_dimensions_recorded_as_failed(self, direct_vm, direct_deploy):
+    def test_missing_dimensions_reverts(self, direct_vm, direct_deploy):
         direct_vm.mock_llm(
             r".*",
-            "```json\n" + json.dumps({"score": 8, "reasoning": "x"}) + "\n```",
+            "```json\n" + json.dumps({"score": 8}) + "\n```",
         )
         contract = direct_deploy(CONTRACT)
 
-        contract.submit_evaluation(
-            "sub-011", _read_fixture("opus_report_excellent.txt")
-        )
-        result = contract.get_evaluation("sub-011")
-
-        assert result["status"] == FAILED
-        assert result["score"] == 0
+        with direct_vm.expect_revert():
+            contract.submit_evaluation(
+                "sub-011", _read_fixture("opus_report_excellent.txt")
+            )
 
 
 # ── Getters ─────────────────────────────────────────────────────────────────
 
 
 class TestGetters:
-    def test_get_evaluation_unknown_id_reverts(self, direct_vm, direct_deploy):
+    def test_get_status_unknown_id_reverts(self, direct_vm, direct_deploy):
         contract = direct_deploy(CONTRACT)
         with direct_vm.expect_revert("not found"):
-            contract.get_evaluation("nonexistent")
+            contract.get_status("nonexistent")
+
+    def test_get_score_unknown_id_reverts(self, direct_vm, direct_deploy):
+        contract = direct_deploy(CONTRACT)
+        with direct_vm.expect_revert("not found"):
+            contract.get_score("nonexistent")
 
     def test_list_submissions_returns_all_ids(self, direct_vm, direct_deploy):
         direct_vm.mock_llm(r".*", _mock_verdict(score=7))
@@ -251,32 +222,3 @@ class TestGetters:
 
         ids = contract.list_submissions()
         assert set(ids) == {"sub-a", "sub-b"}
-
-
-# ── Opus report hash ────────────────────────────────────────────────────────
-
-
-class TestOpusHash:
-    def test_same_report_same_hash(self, direct_vm, direct_deploy):
-        direct_vm.mock_llm(r".*", _mock_verdict(score=8))
-        contract = direct_deploy(CONTRACT)
-
-        report = _read_fixture("opus_report_excellent.txt")
-        contract.submit_evaluation("h-1", report)
-        contract.submit_evaluation("h-2", report)
-
-        a = contract.get_evaluation("h-1")["opus_report_hash"]
-        b = contract.get_evaluation("h-2")["opus_report_hash"]
-        assert a == b
-        assert len(a) == 64  # sha256 hex digest length
-
-    def test_different_reports_different_hash(self, direct_vm, direct_deploy):
-        direct_vm.mock_llm(r".*", _mock_verdict(score=8))
-        contract = direct_deploy(CONTRACT)
-
-        contract.submit_evaluation("d-1", _read_fixture("opus_report_excellent.txt"))
-        contract.submit_evaluation("d-2", _read_fixture("opus_report_broken.txt"))
-
-        a = contract.get_evaluation("d-1")["opus_report_hash"]
-        b = contract.get_evaluation("d-2")["opus_report_hash"]
-        assert a != b
