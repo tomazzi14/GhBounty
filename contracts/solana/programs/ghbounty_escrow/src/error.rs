@@ -16,4 +16,8 @@ pub enum EscrowError {
     ScoreOutOfRange,
     #[msg("Score has already been set on this submission")]
     ScoreAlreadySet,
+    #[msg("Only the designated scorer can set scores on this bounty")]
+    UnauthorizedScorer,
+    #[msg("Lamport arithmetic overflow")]
+    LamportOverflow,
 }

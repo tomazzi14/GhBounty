@@ -20,6 +20,7 @@ pub enum SubmissionState {
 #[derive(InitSpace)]
 pub struct Bounty {
     pub creator: Pubkey,
+    pub scorer: Pubkey,
     pub bounty_id: u64,
     pub mint: Pubkey,
     pub amount: u64,

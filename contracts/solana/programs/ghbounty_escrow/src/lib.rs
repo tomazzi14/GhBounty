@@ -5,7 +5,7 @@ pub mod state;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke, system_instruction};
 
-use crate::constants::{BOUNTY_SEED, MAX_URL_LEN, SUBMISSION_SEED};
+use crate::constants::{BOUNTY_SEED, MAX_SCORE, MAX_URL_LEN, MIN_SCORE, SUBMISSION_SEED};
 use crate::error::EscrowError;
 use crate::state::{Bounty, BountyState, Submission, SubmissionState};
 
@@ -19,6 +19,7 @@ pub mod ghbounty_escrow {
         ctx: Context<CreateBounty>,
         bounty_id: u64,
         amount: u64,
+        scorer: Pubkey,
         github_issue_url: String,
     ) -> Result<()> {
         require!(amount > 0, EscrowError::ZeroAmount);
@@ -43,6 +44,7 @@ pub mod ghbounty_escrow {
 
         let bounty = &mut ctx.accounts.bounty;
         bounty.creator = ctx.accounts.creator.key();
+        bounty.scorer = scorer;
         bounty.bounty_id = bounty_id;
         bounty.mint = Pubkey::default();
         bounty.amount = amount;
@@ -95,9 +97,11 @@ pub mod ghbounty_escrow {
             EscrowError::SubmissionMismatch
         );
 
-        let amount = bounty.amount;
-        **bounty.to_account_info().try_borrow_mut_lamports()? -= amount;
-        **winner.to_account_info().try_borrow_mut_lamports()? += amount;
+        transfer_lamports(
+            &bounty.to_account_info(),
+            &winner.to_account_info(),
+            bounty.amount,
+        )?;
 
         bounty.state = BountyState::Resolved;
         bounty.winner = Some(submission.solver);
@@ -110,14 +114,46 @@ pub mod ghbounty_escrow {
         let bounty = &mut ctx.accounts.bounty;
         let creator = &ctx.accounts.creator;
 
-        let amount = bounty.amount;
-        **bounty.to_account_info().try_borrow_mut_lamports()? -= amount;
-        **creator.to_account_info().try_borrow_mut_lamports()? += amount;
+        transfer_lamports(
+            &bounty.to_account_info(),
+            &creator.to_account_info(),
+            bounty.amount,
+        )?;
 
         bounty.state = BountyState::Cancelled;
 
         Ok(())
     }
+
+    pub fn set_score(ctx: Context<SetScore>, score: u8) -> Result<()> {
+        require!(
+            (MIN_SCORE..=MAX_SCORE).contains(&score),
+            EscrowError::ScoreOutOfRange
+        );
+        let submission = &mut ctx.accounts.submission;
+        require!(submission.score.is_none(), EscrowError::ScoreAlreadySet);
+
+        submission.score = Some(score);
+        submission.state = SubmissionState::Scored;
+
+        Ok(())
+    }
+}
+
+fn transfer_lamports(
+    from: &AccountInfo,
+    to: &AccountInfo,
+    amount: u64,
+) -> Result<()> {
+    let from_balance = from.lamports();
+    let to_balance = to.lamports();
+    **from.try_borrow_mut_lamports()? = from_balance
+        .checked_sub(amount)
+        .ok_or(EscrowError::LamportOverflow)?;
+    **to.try_borrow_mut_lamports()? = to_balance
+        .checked_add(amount)
+        .ok_or(EscrowError::LamportOverflow)?;
+    Ok(())
 }
 
 #[derive(Accounts)]
@@ -202,4 +238,23 @@ pub struct CancelBounty<'info> {
         constraint = bounty.state == BountyState::Open @ EscrowError::BountyNotOpen,
     )]
     pub bounty: Account<'info, Bounty>,
+}
+
+#[derive(Accounts)]
+pub struct SetScore<'info> {
+    #[account(
+        constraint = scorer.key() == bounty.scorer @ EscrowError::UnauthorizedScorer,
+    )]
+    pub scorer: Signer<'info>,
+
+    #[account(
+        constraint = bounty.state == BountyState::Open @ EscrowError::BountyNotOpen,
+    )]
+    pub bounty: Account<'info, Bounty>,
+
+    #[account(
+        mut,
+        constraint = submission.bounty == bounty.key() @ EscrowError::SubmissionMismatch,
+    )]
+    pub submission: Account<'info, Submission>,
 }

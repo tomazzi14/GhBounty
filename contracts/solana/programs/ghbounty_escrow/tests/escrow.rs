@@ -59,6 +59,16 @@ fn create_bounty_ix(
     amount: u64,
     github_issue_url: &str,
 ) -> Instruction {
+    create_bounty_ix_with_scorer(creator, bounty_id, amount, creator, github_issue_url)
+}
+
+fn create_bounty_ix_with_scorer(
+    creator: &Pubkey,
+    bounty_id: u64,
+    amount: u64,
+    scorer: &Pubkey,
+    github_issue_url: &str,
+) -> Instruction {
     let bounty = bounty_pda(creator, bounty_id);
     let accounts = ghbounty_escrow::accounts::CreateBounty {
         creator: *creator,
@@ -69,9 +79,26 @@ fn create_bounty_ix(
     let data = ghbounty_escrow::instruction::CreateBounty {
         bounty_id,
         amount,
+        scorer: *scorer,
         github_issue_url: github_issue_url.to_string(),
     }
     .data();
+    Instruction { program_id: PROGRAM_ID, accounts, data }
+}
+
+fn set_score_ix(
+    scorer: &Pubkey,
+    bounty: &Pubkey,
+    submission: &Pubkey,
+    score: u8,
+) -> Instruction {
+    let accounts = ghbounty_escrow::accounts::SetScore {
+        scorer: *scorer,
+        bounty: *bounty,
+        submission: *submission,
+    }
+    .to_account_metas(None);
+    let data = ghbounty_escrow::instruction::SetScore { score }.data();
     Instruction { program_id: PROGRAM_ID, accounts, data }
 }
 
@@ -523,4 +550,455 @@ fn multiple_submissions_increment_index() {
         let sub = read_submission(&svm, &submission_pda(&bounty, i));
         assert_eq!(sub.submission_index, i);
     }
+}
+
+// ── Edge cases ─────────────────────────────────────────────────────────────
+
+#[test]
+fn duplicate_bounty_id_rejected() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 42, ONE_SOL, ""),
+        &[],
+    )
+    .unwrap();
+
+    svm.expire_blockhash();
+
+    let err = send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 42, ONE_SOL, ""),
+        &[],
+    )
+    .unwrap_err();
+
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("already in use") || msg.contains("0x0"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn bounty_id_zero_is_valid() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 0);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 0, ONE_SOL, ""),
+        &[],
+    )
+    .unwrap();
+
+    let b = read_bounty(&svm, &bounty);
+    assert_eq!(b.bounty_id, 0);
+    assert_eq!(b.state, BountyState::Open);
+}
+
+#[test]
+fn url_exactly_200_chars_accepted() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let url = "a".repeat(200);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 50, ONE_SOL, &url),
+        &[],
+    )
+    .unwrap();
+
+    let b = read_bounty(&svm, &bounty_pda(&creator.pubkey(), 50));
+    assert_eq!(b.github_issue_url.len(), 200);
+}
+
+#[test]
+fn empty_urls_accepted() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 51);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 51, ONE_SOL, ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &solver,
+        submit_solution_ix(&solver.pubkey(), &bounty, 0, "", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    let b = read_bounty(&svm, &bounty);
+    let s = read_submission(&svm, &submission_pda(&bounty, 0));
+    assert_eq!(b.github_issue_url, "");
+    assert_eq!(s.pr_url, "");
+}
+
+#[test]
+fn creator_can_submit_to_own_bounty() {
+    // MVP allows self-submission. Off-chain ranking surfaces the self-deal
+    // risk; on-chain we do not restrict because legitimate self-fulfilment
+    // (e.g. company pays its own contractor via the bounty rail) is valid.
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 60);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 60, ONE_SOL, ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &creator,
+        submit_solution_ix(&creator.pubkey(), &bounty, 0, "self-pr", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    let s = read_submission(&svm, &submission_pda(&bounty, 0));
+    assert_eq!(s.solver, creator.pubkey());
+}
+
+#[test]
+fn cancel_with_pending_submissions_succeeds() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let s1 = funded(&mut svm, ONE_SOL);
+    let s2 = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 70);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 70, ONE_SOL, ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &s1,
+        submit_solution_ix(&s1.pubkey(), &bounty, 0, "pr1", [1u8; 32]),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &s2,
+        submit_solution_ix(&s2.pubkey(), &bounty, 1, "pr2", [2u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    send(&mut svm, &creator, cancel_bounty_ix(&creator.pubkey(), &bounty), &[]).unwrap();
+
+    // Bounty cancelled with submissions still on-chain; solvers' rent is
+    // retained in their Submission PDAs (not refunded here — future cleanup
+    // instruction could reclaim).
+    let b = read_bounty(&svm, &bounty);
+    assert_eq!(b.state, BountyState::Cancelled);
+    assert_eq!(b.submission_count, 2);
+
+    let s = read_submission(&svm, &submission_pda(&bounty, 0));
+    assert_eq!(s.state, SubmissionState::Pending);
+}
+
+#[test]
+fn multi_bounty_same_creator_isolated() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+
+    let b1 = bounty_pda(&creator.pubkey(), 100);
+    let b2 = bounty_pda(&creator.pubkey(), 101);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 100, ONE_SOL, "b1"),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 101, 2 * ONE_SOL, "b2"),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &solver,
+        submit_solution_ix(&solver.pubkey(), &b1, 0, "pr-b1", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    // Submission on b1 must not affect b2.
+    assert_eq!(read_bounty(&svm, &b1).submission_count, 1);
+    assert_eq!(read_bounty(&svm, &b2).submission_count, 0);
+    assert_eq!(read_bounty(&svm, &b1).amount, ONE_SOL);
+    assert_eq!(read_bounty(&svm, &b2).amount, 2 * ONE_SOL);
+
+    // Cancelling b1 leaves b2 untouched.
+    svm.expire_blockhash();
+    send(&mut svm, &creator, cancel_bounty_ix(&creator.pubkey(), &b1), &[]).unwrap();
+    assert_eq!(read_bounty(&svm, &b1).state, BountyState::Cancelled);
+    assert_eq!(read_bounty(&svm, &b2).state, BountyState::Open);
+}
+
+// ── set_score ──────────────────────────────────────────────────────────────
+
+#[test]
+fn scorer_can_set_score_once() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+    let scorer = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 200);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix_with_scorer(&creator.pubkey(), 200, ONE_SOL, &scorer.pubkey(), ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &solver,
+        submit_solution_ix(&solver.pubkey(), &bounty, 0, "pr", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    let submission = submission_pda(&bounty, 0);
+    send(
+        &mut svm,
+        &scorer,
+        set_score_ix(&scorer.pubkey(), &bounty, &submission, 8),
+        &[],
+    )
+    .unwrap();
+
+    let s = read_submission(&svm, &submission);
+    assert_eq!(s.score, Some(8));
+    assert_eq!(s.state, SubmissionState::Scored);
+}
+
+#[test]
+fn non_scorer_cannot_set_score() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+    let scorer = funded(&mut svm, ONE_SOL);
+    let attacker = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 201);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix_with_scorer(&creator.pubkey(), 201, ONE_SOL, &scorer.pubkey(), ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &solver,
+        submit_solution_ix(&solver.pubkey(), &bounty, 0, "pr", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    let submission = submission_pda(&bounty, 0);
+    let err = send(
+        &mut svm,
+        &attacker,
+        set_score_ix(&attacker.pubkey(), &bounty, &submission, 7),
+        &[],
+    )
+    .unwrap_err();
+
+    assert!(format!("{err:?}").contains("UnauthorizedScorer"));
+}
+
+#[test]
+fn score_out_of_range_rejected() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+    let scorer = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 202);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix_with_scorer(&creator.pubkey(), 202, ONE_SOL, &scorer.pubkey(), ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &solver,
+        submit_solution_ix(&solver.pubkey(), &bounty, 0, "pr", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    let submission = submission_pda(&bounty, 0);
+    let err = send(
+        &mut svm,
+        &scorer,
+        set_score_ix(&scorer.pubkey(), &bounty, &submission, 0),
+        &[],
+    )
+    .unwrap_err();
+    assert!(format!("{err:?}").contains("ScoreOutOfRange"));
+
+    svm.expire_blockhash();
+    let err = send(
+        &mut svm,
+        &scorer,
+        set_score_ix(&scorer.pubkey(), &bounty, &submission, 11),
+        &[],
+    )
+    .unwrap_err();
+    assert!(format!("{err:?}").contains("ScoreOutOfRange"));
+}
+
+#[test]
+fn double_score_rejected() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+    let scorer = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 203);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix_with_scorer(&creator.pubkey(), 203, ONE_SOL, &scorer.pubkey(), ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &solver,
+        submit_solution_ix(&solver.pubkey(), &bounty, 0, "pr", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+
+    let submission = submission_pda(&bounty, 0);
+    send(
+        &mut svm,
+        &scorer,
+        set_score_ix(&scorer.pubkey(), &bounty, &submission, 7),
+        &[],
+    )
+    .unwrap();
+
+    svm.expire_blockhash();
+    let err = send(
+        &mut svm,
+        &scorer,
+        set_score_ix(&scorer.pubkey(), &bounty, &submission, 9),
+        &[],
+    )
+    .unwrap_err();
+    assert!(format!("{err:?}").contains("ScoreAlreadySet"));
+}
+
+#[test]
+fn cannot_score_after_cancel() {
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+    let scorer = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 204);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix_with_scorer(&creator.pubkey(), 204, ONE_SOL, &scorer.pubkey(), ""),
+        &[],
+    )
+    .unwrap();
+    send(
+        &mut svm,
+        &solver,
+        submit_solution_ix(&solver.pubkey(), &bounty, 0, "pr", [0u8; 32]),
+        &[],
+    )
+    .unwrap();
+    send(&mut svm, &creator, cancel_bounty_ix(&creator.pubkey(), &bounty), &[]).unwrap();
+
+    let submission = submission_pda(&bounty, 0);
+    let err = send(
+        &mut svm,
+        &scorer,
+        set_score_ix(&scorer.pubkey(), &bounty, &submission, 7),
+        &[],
+    )
+    .unwrap_err();
+
+    assert!(format!("{err:?}").contains("BountyNotOpen"));
+}
+
+#[test]
+fn submit_with_wrong_index_fails() {
+    // The submission seed is derived from bounty.submission_count. Passing
+    // a PDA built with a different index yields ConstraintSeeds.
+    let mut svm = setup();
+    let creator = funded(&mut svm, 10 * ONE_SOL);
+    let solver = funded(&mut svm, ONE_SOL);
+    let bounty = bounty_pda(&creator.pubkey(), 80);
+
+    send(
+        &mut svm,
+        &creator,
+        create_bounty_ix(&creator.pubkey(), 80, ONE_SOL, ""),
+        &[],
+    )
+    .unwrap();
+
+    // Build an ix whose submission PDA uses index=5 while bounty.submission_count=0.
+    let wrong_submission = submission_pda(&bounty, 5);
+    let accounts = ghbounty_escrow::accounts::SubmitSolution {
+        solver: solver.pubkey(),
+        bounty,
+        submission: wrong_submission,
+        system_program: SYSTEM_PROGRAM_ID,
+    }
+    .to_account_metas(None);
+    let data = ghbounty_escrow::instruction::SubmitSolution {
+        pr_url: "pr".to_string(),
+        opus_report_hash: [0u8; 32],
+    }
+    .data();
+    let ix = Instruction { program_id: PROGRAM_ID, accounts, data };
+
+    let err = send(&mut svm, &solver, ix, &[]).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("ConstraintSeeds") || msg.contains("2006"),
+        "unexpected error: {msg}"
+    );
 }
