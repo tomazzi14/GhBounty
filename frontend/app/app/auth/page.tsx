@@ -246,7 +246,7 @@ export default function AuthPage() {
             <div className="field-row">
               <label className="field">
                 <span className="field-label">Company name *</span>
-                <input name="name" placeholder="Ava Labs" required />
+                <input name="name" placeholder="Your company name" required />
               </label>
               <label className="field">
                 <span className="field-label">Email *</span>
