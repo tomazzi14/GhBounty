@@ -4,12 +4,27 @@ import {
   boolean,
   integer,
   pgEnum,
+  pgSchema,
   pgTable,
   smallint,
   text,
   timestamp,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
+
+/* ------------------------------------------------------------------ */
+/* Supabase auth schema reference                                       */
+/* ------------------------------------------------------------------ */
+
+const authSchema = pgSchema("auth");
+export const authUsers = authSchema.table("users", {
+  id: uuid("id").primaryKey(),
+});
+
+/* ------------------------------------------------------------------ */
+/* Enums                                                                */
+/* ------------------------------------------------------------------ */
 
 export const issueStateEnum = pgEnum("issue_state", [
   "open",
@@ -28,6 +43,10 @@ export const evaluationSourceEnum = pgEnum("evaluation_source", [
   "opus",
   "genlayer",
 ]);
+
+export const userRoleEnum = pgEnum("user_role", ["company", "dev"]);
+
+export const releaseModeEnum = pgEnum("release_mode", ["auto", "assisted"]);
 
 export const chainRegistry = pgTable("chain_registry", {
   chainId: text("chain_id").primaryKey(),
@@ -89,6 +108,137 @@ export const evaluations = pgTable("evaluations", {
   reasoning: text("reasoning"),
   retryCount: integer("retry_count").notNull().default(0),
   txHash: text("tx_hash"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+});
+
+/* ==================================================================
+ * APP / IDENTITY LAYER
+ *
+ * The tables above (issues, submissions, evaluations, chain_registry)
+ * mirror onchain state and are the source of truth for the relayer.
+ * The tables below carry off-chain identity + UI metadata that the
+ * frontend needs (profiles, branding, release modes, etc).
+ *
+ * Convention: any table here that links to an onchain entity does so
+ * via a 1:1 FK ("*_meta" tables). The onchain rows stay untouched.
+ * ================================================================== */
+
+/* --- Profiles: 1:1 with auth.users, shared by both roles -------- */
+export const profiles = pgTable("profiles", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => authUsers.id, { onDelete: "cascade" }),
+  role: userRoleEnum("role").notNull(),
+  email: text("email").notNull().unique(),
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+});
+
+/* --- Companies: populated when profiles.role = 'company' -------- */
+export const companies = pgTable("companies", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => profiles.userId, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  description: text("description").notNull(),
+  website: text("website"),
+  industry: text("industry"),
+  logoUrl: text("logo_url"),
+  githubOrg: text("github_org"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+});
+
+/* --- Developers: populated when profiles.role = 'dev' ----------- */
+export const developers = pgTable("developers", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => profiles.userId, { onDelete: "cascade" }),
+  username: text("username").notNull().unique(),
+  githubHandle: text("github_handle"),
+  bio: text("bio"),
+  skills: text("skills")
+    .array()
+    .notNull()
+    .default(sql`ARRAY[]::text[]`),
+  avatarUrl: text("avatar_url"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+});
+
+/* --- Wallets: N:1 with profiles, multi-chain ready -------------- */
+export const wallets = pgTable(
+  "wallets",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.userId, { onDelete: "cascade" }),
+    chainId: text("chain_id")
+      .notNull()
+      .references(() => chainRegistry.chainId),
+    address: text("address").notNull(),
+    isTreasury: boolean("is_treasury").notNull().default(false),
+    isPayout: boolean("is_payout").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .default(sql`now()`)
+      .notNull(),
+  },
+  (t) => ({
+    uniqueUserChainAddr: unique().on(t.userId, t.chainId, t.address),
+    uniqueChainAddr: unique().on(t.chainId, t.address),
+  }),
+);
+
+/* --- Bounty UI metadata: 1:1 with issues ------------------------ */
+export const bountyMeta = pgTable("bounty_meta", {
+  issueId: uuid("issue_id")
+    .primaryKey()
+    .references(() => issues.id, { onDelete: "cascade" }),
+  title: text("title"),
+  description: text("description"),
+  releaseMode: releaseModeEnum("release_mode").notNull().default("auto"),
+  // Whether the company explicitly closed it from the UI (vs onchain cancel)
+  closedByUser: boolean("closed_by_user").notNull().default(false),
+  // Link onchain creator wallet → user profile (when known)
+  createdByUserId: uuid("created_by_user_id").references(
+    () => profiles.userId,
+    { onDelete: "set null" },
+  ),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .default(sql`now()`)
+    .notNull(),
+});
+
+/* --- Submission UI metadata: 1:1 with submissions --------------- */
+export const submissionMeta = pgTable("submission_meta", {
+  submissionId: uuid("submission_id")
+    .primaryKey()
+    .references(() => submissions.id, { onDelete: "cascade" }),
+  note: text("note"),
+  submittedByUserId: uuid("submitted_by_user_id").references(
+    () => profiles.userId,
+    { onDelete: "set null" },
+  ),
   createdAt: timestamp("created_at", { withTimezone: true })
     .default(sql`now()`)
     .notNull(),
