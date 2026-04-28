@@ -8,6 +8,8 @@ import {
   type Db,
 } from "@ghbounty/db";
 
+import { computeRanking, type RankableSubmission } from "../ranking.js";
+
 export interface ChainSeed {
   chainId: string;
   name: string;
@@ -126,6 +128,72 @@ export async function getRejectThreshold(
   const first = rows[0];
   if (!first) return null;
   return first.threshold ?? null;
+}
+
+/* ---------------------------------------------------------------- */
+/* GHB-96: ranking                                                    */
+/* ---------------------------------------------------------------- */
+
+/**
+ * Fetch all submissions for the given issue, in a shape ready for the
+ * ranking module. Includes auto_rejected/pending rows so the ranking can
+ * also clear stale ranks (state transitions are not tracked separately).
+ */
+export async function fetchSubmissionsForRanking(
+  db: Db,
+  issuePda: string,
+): Promise<RankableSubmission[]> {
+  const rows = await db
+    .select({
+      pda: submissions.pda,
+      state: submissions.state,
+      score: evaluations.score,
+      createdAt: submissions.createdAt,
+    })
+    .from(submissions)
+    .leftJoin(
+      evaluations,
+      sql`${evaluations.submissionPda} = ${submissions.pda}`,
+    )
+    .where(sql`${submissions.issuePda} = ${issuePda}`);
+  return rows.map((r) => ({
+    pda: r.pda,
+    state: r.state as RankableSubmission["state"],
+    score: r.score ?? 0,
+    createdAt: r.createdAt instanceof Date ? r.createdAt.getTime() : 0,
+  }));
+}
+
+/**
+ * Persist new rank values. Each row gets `rank` = the value from the
+ * assignment (null for ineligible rows).
+ *
+ * One UPDATE per submission. Row counts are tiny in practice (≤ a few
+ * dozen per issue), so we don't bother batching with a CASE expression.
+ */
+export async function applyRanking(
+  db: Db,
+  assignments: ReadonlyArray<{ pda: string; rank: number | null }>,
+): Promise<void> {
+  for (const a of assignments) {
+    await db
+      .update(submissions)
+      .set({ rank: a.rank })
+      .where(sql`${submissions.pda} = ${a.pda}`);
+  }
+}
+
+/**
+ * Convenience wrapper: fetch + compute + persist ranks for one issue.
+ * The handler calls this after every newly-scored submission.
+ */
+export async function recomputeRanking(
+  db: Db,
+  issuePda: string,
+): Promise<void> {
+  const subs = await fetchSubmissionsForRanking(db, issuePda);
+  const ranks = computeRanking(subs);
+  await applyRanking(db, ranks);
 }
 
 export interface InsertEvaluationInput {

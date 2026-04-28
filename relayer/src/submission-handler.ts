@@ -6,6 +6,7 @@ import {
   insertEvaluation,
   markAutoRejected,
   markScored,
+  recomputeRanking,
   upsertSubmission,
 } from "./db/ops.js";
 import { log } from "./logger.js";
@@ -116,6 +117,10 @@ export async function handleSubmission(
       reportHash,
       txHash,
     });
+    // GHB-96: rerank the issue's submissions. A newly-scored entry can
+    // displace an existing #1, and an auto_rejected one needs its old rank
+    // cleared (computeRanking returns null for non-eligible rows).
+    await recomputeRanking(deps.db, sub.bounty.toBase58());
   }
 
   return { score, outcome, threshold, source, txHash };

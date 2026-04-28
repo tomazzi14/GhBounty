@@ -96,6 +96,9 @@ export const submissions = pgTable("submissions", {
   opusReportHash: text("opus_report_hash").notNull(),
   txHash: text("tx_hash"),
   state: submissionStateEnum("state").notNull().default("pending"),
+  // GHB-96: 1-based rank within the issue (score desc, ties by created_at asc).
+  // Null until the submission is scored, or for auto_rejected submissions.
+  rank: smallint("rank"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .default(sql`now()`)
     .notNull(),

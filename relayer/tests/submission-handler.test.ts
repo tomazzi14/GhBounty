@@ -10,26 +10,44 @@ import { handleSubmission } from "../src/submission-handler.js";
  * The real `analyzeSubmission` is bypassed via `deps.analyze`, and the real
  * `db/ops` functions are exercised against a Drizzle-shaped fake.
  *
- * The fake DB is just enough to satisfy the small surface our ops use:
- *   - select(...).from(bountyMeta).innerJoin(issues, ...).where(...).limit()
- *   - insert(submissions).values(...).onConflictDoNothing(...)
- *   - update(submissions).set(...).where(...)
- *   - insert(evaluations).values(...)
+ * Drizzle calls supported by the proxy:
+ *   threshold lookup  : select(...).from(bountyMeta).innerJoin(...).where(...).limit(1)
+ *   ranking fetch     : select(...).from(submissions).leftJoin(...).where(...)
+ *   submission upsert : insert(submissions).values(...).onConflictDoNothing()
+ *   evaluation insert : insert(evaluations).values(...) (awaited directly)
+ *   state mark        : update(submissions).set(...).where(...)
+ *   rank apply        : update(submissions).set({rank}).where(...)
+ *
+ * `state.thresholdToReturn` and `state.rankingRowsToReturn` let each test
+ * stage what those two SELECTs resolve to.
  */
 
 type Recorded = { kind: string; payload: unknown };
 
+interface RankingRow {
+  pda: string;
+  state: string;
+  score: number;
+  createdAt: Date;
+}
+
 interface FakeDb {
   calls: Recorded[];
   thresholdToReturn: number | null;
+  rankingRowsToReturn: RankingRow[];
 }
 
-function fakeDb(thresholdToReturn: number | null = null): FakeDb {
-  return { calls: [], thresholdToReturn };
+function fakeDb(opts: {
+  threshold?: number | null;
+  rankingRows?: RankingRow[];
+} = {}): FakeDb {
+  return {
+    calls: [],
+    thresholdToReturn: opts.threshold ?? null,
+    rankingRowsToReturn: opts.rankingRows ?? [],
+  };
 }
 
-// Build a Drizzle-shaped object that records calls. Each method returns
-// `this` (or a final array for `.limit()`) so the chain compiles + runs.
 function buildDrizzleProxy(state: FakeDb): unknown {
   const insertChain = (table: unknown) => ({
     values: (payload: unknown) => {
@@ -64,6 +82,9 @@ function buildDrizzleProxy(state: FakeDb): unknown {
     }),
   });
 
+  // Two distinct select chains identified by which join is called:
+  //   innerJoin → threshold lookup, terminates at .where().limit()
+  //   leftJoin  → ranking fetch, terminates at .where() (thenable)
   const selectChain = () => ({
     from: () => ({
       innerJoin: () => ({
@@ -77,6 +98,12 @@ function buildDrizzleProxy(state: FakeDb): unknown {
             );
           },
         }),
+      }),
+      leftJoin: () => ({
+        where: () => {
+          state.calls.push({ kind: "select", payload: "ranking-fetch" });
+          return Promise.resolve(state.rankingRowsToReturn);
+        },
       }),
     }),
   });
@@ -167,7 +194,7 @@ describe("handleSubmission", () => {
   });
 
   test("with DB and no threshold: marks scored, never auto_rejected", async () => {
-    const state = fakeDb(null); // no threshold configured for the issue
+    const state = fakeDb({}); // no threshold configured for the issue
     const db = buildDrizzleProxy(state);
     const { client } = buildScorer();
     const analyze = vi.fn(async () => opusResult);
@@ -189,7 +216,7 @@ describe("handleSubmission", () => {
   });
 
   test("score below threshold → marks auto_rejected", async () => {
-    const state = fakeDb(5); // threshold=5, score=3 → reject
+    const state = fakeDb({ threshold: 5 }); // threshold=5, score=3 → reject
     const db = buildDrizzleProxy(state);
     const { client } = buildScorer();
     const analyze = vi.fn(async () => lowOpusResult);
@@ -212,7 +239,7 @@ describe("handleSubmission", () => {
   });
 
   test("score equal to threshold passes (strict <)", async () => {
-    const state = fakeDb(7); // threshold=7, score=7 → pass
+    const state = fakeDb({ threshold: 7 }); // threshold=7, score=7 → pass
     const db = buildDrizzleProxy(state);
     const { client } = buildScorer();
     const analyze = vi.fn(async () => opusResult);
@@ -233,7 +260,7 @@ describe("handleSubmission", () => {
   });
 
   test("setScore is called regardless of threshold outcome (onchain truth)", async () => {
-    const state = fakeDb(10); // threshold=10, score=3 → reject
+    const state = fakeDb({ threshold: 10 }); // threshold=10, score=3 → reject
     const db = buildDrizzleProxy(state);
     const { client, setScore } = buildScorer("TX_REJECTED");
     const analyze = vi.fn(async () => lowOpusResult);
@@ -253,7 +280,7 @@ describe("handleSubmission", () => {
   });
 
   test("evaluation row is inserted in both pass and reject paths", async () => {
-    const passState = fakeDb(null);
+    const passState = fakeDb({});
     await handleSubmission(buildSub(), {
       ...baseDeps,
       db: buildDrizzleProxy(passState) as never,
@@ -263,7 +290,7 @@ describe("handleSubmission", () => {
     expect(passState.calls.filter((c) => c.kind === "insert").length).toBe(2);
     // First insert = upsertSubmission, second = insertEvaluation.
 
-    const rejectState = fakeDb(8);
+    const rejectState = fakeDb({ threshold: 8 });
     await handleSubmission(buildSub(), {
       ...baseDeps,
       db: buildDrizzleProxy(rejectState) as never,
@@ -274,7 +301,7 @@ describe("handleSubmission", () => {
   });
 
   test("falls back to stub when no API key (still threshold-checked)", async () => {
-    const state = fakeDb(6); // stubScore=5 < threshold=6 → reject
+    const state = fakeDb({ threshold: 6 }); // stubScore=5 < threshold=6 → reject
     const db = buildDrizzleProxy(state);
     const { client } = buildScorer();
 
@@ -325,7 +352,7 @@ describe("handleSubmission", () => {
   });
 
   test("upserts the submission before analyzing (so DB has the row even on analyze failure)", async () => {
-    const state = fakeDb(null);
+    const state = fakeDb({});
     const db = buildDrizzleProxy(state);
     const { client } = buildScorer();
     const analyze = vi.fn(async () => {
@@ -345,5 +372,108 @@ describe("handleSubmission", () => {
     expect(state.calls.filter((c) => c.kind === "insert").length).toBe(1);
     // No update yet because we never made it past setScore.
     expect(state.calls.filter((c) => c.kind === "update").length).toBe(0);
+  });
+
+  /* GHB-96: ranking integration ---------------------------------- */
+
+  test("recomputes rank for the issue after scoring", async () => {
+    // Stage three existing submissions for the same issue. After the new
+    // submission is scored, the handler runs recomputeRanking, which fetches
+    // these rows and writes back rank values for each.
+    const t0 = new Date("2026-04-28T10:00:00Z");
+    const state = fakeDb({
+      rankingRows: [
+        { pda: "old_lower", state: "scored", score: 5, createdAt: t0 },
+        { pda: "new_higher", state: "scored", score: 9, createdAt: new Date(t0.getTime() + 60_000) },
+        { pda: "rejected", state: "auto_rejected", score: 2, createdAt: new Date(t0.getTime() + 30_000) },
+      ],
+    });
+    const db = buildDrizzleProxy(state);
+    const { client } = buildScorer();
+    const analyze = vi.fn(async () => opusResult);
+
+    await handleSubmission(buildSub(), {
+      ...baseDeps,
+      db: db as never,
+      scorer: client,
+      analyze,
+    });
+
+    // Update calls in order: 1 markScored + 3 rank applications.
+    const updateCalls = state.calls.filter((c) => c.kind === "update");
+    expect(updateCalls).toHaveLength(4);
+
+    const rankPatches = updateCalls
+      .slice(1)
+      .map((c) => (c.payload as { patch: { rank: number | null } }).patch);
+    // computeRanking output (input-order preserved):
+    //   old_lower (score=5)    → rank 2 (later than new_higher)
+    //   new_higher (score=9)   → rank 1
+    //   rejected (auto_rejected) → null
+    expect(rankPatches).toEqual([{ rank: 2 }, { rank: 1 }, { rank: null }]);
+  });
+
+  test("recomputeRanking runs on auto_rejected path too (clears stale rank)", async () => {
+    // Even when the new submission is auto-rejected, we still recompute
+    // ranks: an admin might have changed the threshold and the row's old
+    // rank needs to clear.
+    const t0 = new Date("2026-04-28T10:00:00Z");
+    const state = fakeDb({
+      threshold: 8,
+      rankingRows: [
+        { pda: "stale", state: "auto_rejected", score: 4, createdAt: t0 },
+      ],
+    });
+    const db = buildDrizzleProxy(state);
+    const { client } = buildScorer();
+    const analyze = vi.fn(async () => lowOpusResult); // score=3 < 8
+
+    await handleSubmission(buildSub(), {
+      ...baseDeps,
+      db: db as never,
+      scorer: client,
+      analyze,
+    });
+
+    const updateCalls = state.calls.filter((c) => c.kind === "update");
+    // 1 markAutoRejected + 1 rank-clear = 2
+    expect(updateCalls).toHaveLength(2);
+    const rankPatch = (updateCalls[1].payload as { patch: { rank: number | null } }).patch;
+    expect(rankPatch).toEqual({ rank: null });
+  });
+
+  test("ranking-fetch SELECT runs after evaluation insert", async () => {
+    const state = fakeDb({});
+    const db = buildDrizzleProxy(state);
+    const { client } = buildScorer();
+    const analyze = vi.fn(async () => opusResult);
+
+    await handleSubmission(buildSub(), {
+      ...baseDeps,
+      db: db as never,
+      scorer: client,
+      analyze,
+    });
+
+    // The two SELECTs in order: threshold-lookup then ranking-fetch.
+    const selects = state.calls.filter((c) => c.kind === "select");
+    expect(selects.map((s) => s.payload)).toEqual([
+      "threshold-lookup",
+      "ranking-fetch",
+    ]);
+  });
+
+  test("no DB: ranking is not attempted", async () => {
+    const { client } = buildScorer();
+    const analyze = vi.fn(async () => opusResult);
+    // Just verify it doesn't crash without a DB; nothing to assert beyond
+    // a successful resolution since there's no fake to record into.
+    const r = await handleSubmission(buildSub(), {
+      ...baseDeps,
+      db: null,
+      scorer: client,
+      analyze,
+    });
+    expect(r.outcome).toBe("pass");
   });
 });
