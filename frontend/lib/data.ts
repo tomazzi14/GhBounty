@@ -309,18 +309,20 @@ export async function fetchBountiesByCompany(
 type SubmissionRow = {
   id: string;
   pr_url: string;
+  issue_pda: string;
   state: "pending" | "scored" | "winner";
   created_at: string;
-  // Join issues to resolve the bounty UUID from issue_pda.
-  issue: { id: string } | null;
   submission_meta: {
     note: string | null;
     submitted_by_user_id: string | null;
   } | null;
 };
 
+// `submissions.issue_pda` is a plain text column with no FK constraint, so
+// PostgREST can't auto-embed `issues`. We fetch submissions, then resolve
+// the matching issue UUIDs in a second round-trip via `issues.pda`.
 const SUBMISSION_SELECT =
-  "id, pr_url, state, created_at, issue:issues!submissions_issue_pda_fkey(id), submission_meta(note, submitted_by_user_id)";
+  "id, pr_url, issue_pda, state, created_at, submission_meta(note, submitted_by_user_id)";
 
 function parseGithubPrUrl(url: string): { prRepo: string; prNumber: number } {
   const m = url.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
@@ -328,11 +330,11 @@ function parseGithubPrUrl(url: string): { prRepo: string; prNumber: number } {
   return { prRepo: m[1], prNumber: Number(m[2]) };
 }
 
-function rowToSubmission(row: SubmissionRow): Submission {
+function rowToSubmission(row: SubmissionRow, bountyId: string): Submission {
   const { prRepo, prNumber } = parseGithubPrUrl(row.pr_url);
   return {
     id: row.id,
-    bountyId: row.issue?.id ?? "",
+    bountyId,
     devId: row.submission_meta?.submitted_by_user_id ?? "",
     prUrl: row.pr_url,
     prRepo,
@@ -343,6 +345,22 @@ function rowToSubmission(row: SubmissionRow): Submission {
   };
 }
 
+async function resolveIssueIdsByPda(
+  supabase: ReturnType<typeof createClient>,
+  pdas: string[],
+): Promise<Map<string, string>> {
+  if (pdas.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from("issues")
+    .select("id, pda")
+    .in("pda", pdas);
+  if (error) {
+    console.error("[resolveIssueIdsByPda]", error);
+    return new Map();
+  }
+  return new Map((data ?? []).map((r) => [r.pda, r.id]));
+}
+
 export async function fetchSubmissionsByBounty(
   bountyId: string,
 ): Promise<Submission[]> {
@@ -350,9 +368,6 @@ export async function fetchSubmissionsByBounty(
     return mockSubmissionsByBounty(bountyId);
   }
   const supabase = createClient();
-  // Filter via the inner join on issues.id. The relayer stores the link
-  // by issue_pda, so we go bountyId → issue → issue_pda → submissions.
-  // PostgREST's resource embedding lets us do this in one query.
   const { data: issue } = await supabase
     .from("issues")
     .select("pda")
@@ -369,7 +384,7 @@ export async function fetchSubmissionsByBounty(
     console.error("[fetchSubmissionsByBounty]", error);
     return [];
   }
-  return (data ?? []).map(rowToSubmission);
+  return (data ?? []).map((row) => rowToSubmission(row, bountyId));
 }
 
 export async function fetchSubmissionsByDev(
@@ -379,22 +394,35 @@ export async function fetchSubmissionsByDev(
     return mockSubmissionsByDev(devId);
   }
   const supabase = createClient();
-  // Filter via submission_meta.submitted_by_user_id — the link to a profile
-  // is set when the user submits via the UI; onchain-only submissions
-  // (no profile linked) are excluded from the dev's "my submissions" view.
+  // Look up submission_meta first to get the submission ids for this user,
+  // then fetch the submissions themselves. We can't filter directly on a
+  // related table without an !inner hint, and the inverse query is simpler.
+  const { data: metaRows, error: metaErr } = await supabase
+    .from("submission_meta")
+    .select("submission_id")
+    .eq("submitted_by_user_id", devId);
+  if (metaErr) {
+    console.error("[fetchSubmissionsByDev:meta]", metaErr);
+    return [];
+  }
+  const ids = (metaRows ?? []).map((r) => r.submission_id);
+  if (ids.length === 0) return [];
   const { data, error } = await supabase
     .from("submissions")
     .select(SUBMISSION_SELECT)
-    .eq("submission_meta.submitted_by_user_id", devId)
+    .in("id", ids)
     .order("created_at", { ascending: false })
     .returns<SubmissionRow[]>();
   if (error) {
     console.error("[fetchSubmissionsByDev]", error);
     return [];
   }
-  return (data ?? [])
-    .filter((row) => row.submission_meta?.submitted_by_user_id === devId)
-    .map(rowToSubmission);
+  const rows = data ?? [];
+  const pdas = Array.from(new Set(rows.map((r) => r.issue_pda)));
+  const idByPda = await resolveIssueIdsByPda(supabase, pdas);
+  return rows.map((row) =>
+    rowToSubmission(row, idByPda.get(row.issue_pda) ?? ""),
+  );
 }
 
 export async function hasDevSubmitted(
