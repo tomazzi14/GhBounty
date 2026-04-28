@@ -37,6 +37,7 @@ export const submissionStateEnum = pgEnum("submission_state", [
   "pending",
   "scored",
   "winner",
+  "auto_rejected",
 ]);
 
 export const evaluationSourceEnum = pgEnum("evaluation_source", [
@@ -233,6 +234,9 @@ export const bountyMeta = pgTable("bounty_meta", {
     () => profiles.userId,
     { onDelete: "set null" },
   ),
+  // GHB-95: submissions scoring < this value are auto-rejected off-chain.
+  // null = no auto-rejection (companies must triage every submission).
+  rejectThreshold: smallint("reject_threshold"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .default(sql`now()`)
     .notNull(),
