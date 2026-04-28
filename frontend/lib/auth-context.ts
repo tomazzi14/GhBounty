@@ -31,3 +31,7 @@ export function useAuth() {
 export const useSupabaseBackend =
   typeof process !== "undefined" &&
   process.env.NEXT_PUBLIC_USE_SUPABASE === "1";
+
+export const useAuthBypass =
+  typeof process !== "undefined" &&
+  process.env.NEXT_PUBLIC_AUTH_BYPASS === "1";
