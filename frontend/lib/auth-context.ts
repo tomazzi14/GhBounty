@@ -6,6 +6,11 @@ import type { Company, Dev, User } from "./types";
 export type AuthContextValue = {
   user: User | null;
   ready: boolean;
+  // GHB-165: true when the wallet authenticated through Privy but no
+  // `profiles` row exists yet. The route layer uses this to send the user
+  // to /app/onboarding instead of /app/auth. Other auth backends leave it
+  // `false`.
+  pendingOnboarding?: boolean;
   loginByEmail: (email: string, password?: string) => Promise<User | null>;
   registerCompany: (
     data: Omit<Company, "id" | "role" | "createdAt">,

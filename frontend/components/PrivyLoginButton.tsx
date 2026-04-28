@@ -8,9 +8,11 @@ import { usePrivyBackend } from "@/lib/auth-context";
 /**
  * "Connect Wallet" button shown on /app/auth when NEXT_PUBLIC_USE_PRIVY=1.
  *
- * Stores the role hint in localStorage so the Privy auth provider knows
- * whether to render a Company or Dev shape after the wallet signs the
- * SIWS message.
+ * GHB-165: stores the role hint in localStorage as a UX nudge for the
+ * onboarding form, then redirects to `/app` after Privy authenticates.
+ * The index page reads `pendingOnboarding` from the auth context and
+ * sends the user to /app/onboarding (no profile yet) or to their dashboard
+ * (returning user with profile already in Supabase).
  */
 export function PrivyLoginButton({
   role,
@@ -24,9 +26,9 @@ export function PrivyLoginButton({
 
   useEffect(() => {
     if (ready && authenticated) {
-      router.replace(role === "company" ? "/app/company" : "/app/dev");
+      router.replace("/app");
     }
-  }, [ready, authenticated, role, router]);
+  }, [ready, authenticated, router]);
 
   function onClick() {
     if (typeof window !== "undefined") {
