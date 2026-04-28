@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   integer,
+  jsonb,
   pgEnum,
   pgSchema,
   pgTable,
@@ -106,6 +107,17 @@ export const evaluations = pgTable("evaluations", {
   source: evaluationSourceEnum("source").notNull(),
   score: smallint("score").notNull(),
   reasoning: text("reasoning"),
+  /**
+   * Full structured Opus report (4 dimensions + summary). Null for stub
+   * evaluations. Stored as JSONB so we can index dimensions later if needed.
+   * The same JSON (canonicalized) is what feeds GenLayer's BountyJudge call.
+   */
+  report: jsonb("report"),
+  /**
+   * sha256 (hex) of canonical-JSON `report`. Matches `opusReportHash` stored
+   * onchain at submission time. Empty string for stub evaluations.
+   */
+  reportHash: text("report_hash"),
   retryCount: integer("retry_count").notNull().default(0),
   txHash: text("tx_hash"),
   createdAt: timestamp("created_at", { withTimezone: true })

@@ -16,7 +16,9 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
     "@coral-xyz/anchor": "^0.30.1",
+    "@ghbounty/diff-filter": "workspace:^",
     "@solana/web3.js": "^1.95.0",
     "bn.js": "^5.2.1",
     "drizzle-orm": "^0.45.2",

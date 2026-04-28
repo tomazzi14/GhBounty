@@ -91,6 +91,10 @@ export interface InsertEvaluationInput {
   source: "stub" | "opus" | "genlayer";
   score: number;
   reasoning?: string;
+  /** Full structured Opus report (4 dims + summary). Pass `null` for stub. */
+  report?: unknown;
+  /** sha256 hex of canonical-JSON report. Empty/null for stub. */
+  reportHash?: string;
   retryCount?: number;
   txHash?: string;
 }
@@ -104,6 +108,8 @@ export async function insertEvaluation(
     source: input.source,
     score: input.score,
     reasoning: input.reasoning,
+    report: input.report ?? null,
+    reportHash: input.reportHash || null,
     retryCount: input.retryCount ?? 0,
     txHash: input.txHash,
   });

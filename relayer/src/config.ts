@@ -18,7 +18,11 @@ export interface RelayerConfig {
   logLevel: "debug" | "info" | "warn" | "error";
   databaseUrl: string | null;
   chainId: string;
+  anthropicApiKey: string | null;
+  anthropicModel: string;
 }
+
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929";
 
 export function loadConfig(): RelayerConfig {
   const rpcUrl = must("RPC_URL", "https://api.devnet.solana.com");
@@ -41,6 +45,8 @@ export function loadConfig(): RelayerConfig {
   const logLevel = (process.env.LOG_LEVEL ?? "info") as RelayerConfig["logLevel"];
   const databaseUrl = process.env.DATABASE_URL?.trim() || null;
   const chainId = process.env.CHAIN_ID ?? "solana-devnet";
+  const anthropicApiKey = process.env.ANTHROPIC_API_KEY?.trim() || null;
+  const anthropicModel = process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_ANTHROPIC_MODEL;
 
   return {
     rpcUrl,
@@ -51,5 +57,7 @@ export function loadConfig(): RelayerConfig {
     logLevel,
     databaseUrl,
     chainId,
+    anthropicApiKey,
+    anthropicModel,
   };
 }

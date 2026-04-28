@@ -141,4 +141,47 @@ describe("config", () => {
       restore();
     }
   });
+
+  test("anthropic config: defaults to disabled with sonnet model", () => {
+    const restore = setEnv({
+      SCORER_KEYPAIR_PATH: TMP_KEYPAIR,
+      ANTHROPIC_API_KEY: undefined,
+      ANTHROPIC_MODEL: undefined,
+    });
+    try {
+      const cfg = loadConfig();
+      expect(cfg.anthropicApiKey).toBeNull();
+      expect(cfg.anthropicModel).toBe("claude-sonnet-4-5-20250929");
+    } finally {
+      restore();
+    }
+  });
+
+  test("anthropic config: picks up key and custom model from env", () => {
+    const restore = setEnv({
+      SCORER_KEYPAIR_PATH: TMP_KEYPAIR,
+      ANTHROPIC_API_KEY: "sk-ant-foo",
+      ANTHROPIC_MODEL: "claude-opus-4-5-20251014",
+    });
+    try {
+      const cfg = loadConfig();
+      expect(cfg.anthropicApiKey).toBe("sk-ant-foo");
+      expect(cfg.anthropicModel).toBe("claude-opus-4-5-20251014");
+    } finally {
+      restore();
+    }
+  });
+
+  test("anthropic config: empty/whitespace key normalizes to null", () => {
+    const restore = setEnv({
+      SCORER_KEYPAIR_PATH: TMP_KEYPAIR,
+      ANTHROPIC_API_KEY: "   ",
+    });
+    try {
+      const cfg = loadConfig();
+      expect(cfg.anthropicApiKey).toBeNull();
+    } finally {
+      restore();
+    }
+  });
 });

@@ -30,6 +30,9 @@ async function runOnce(): Promise<never> {
     programId: cfg.programId.toBase58(),
     scorer: cfg.scorerKeypair.publicKey.toBase58(),
     stubScore: cfg.stubScore,
+    anthropic: cfg.anthropicApiKey
+      ? { enabled: true, model: cfg.anthropicModel }
+      : { enabled: false },
   });
 
   const connection = new Connection(cfg.rpcUrl, {
@@ -79,13 +82,17 @@ async function runOnce(): Promise<never> {
       });
     }
 
-    const { score } = await analyzeSubmission(
+    const { score, source, reasoning, report, reportHash } = await analyzeSubmission(
       {
         submissionPda: sub.pda.toBase58(),
         prUrl: sub.prUrl,
         opusReportHash: sub.opusReportHash,
       },
-      cfg.stubScore,
+      {
+        stubScore: cfg.stubScore,
+        anthropicApiKey: cfg.anthropicApiKey,
+        anthropicModel: cfg.anthropicModel,
+      },
     );
 
     const txHash = await client.setScore(sub.bounty, sub.pda, score);
@@ -94,9 +101,11 @@ async function runOnce(): Promise<never> {
       await markScored(db, sub.pda.toBase58());
       await insertEvaluation(db, {
         submissionPda: sub.pda.toBase58(),
-        source: "stub",
+        source,
         score,
-        reasoning: "stub evaluator (Opus integration pending)",
+        reasoning,
+        report,
+        reportHash,
         txHash,
       });
     }
