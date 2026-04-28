@@ -365,7 +365,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             "wallet_connect",
           ],
         },
-        loginMethods: ["wallet"],
+        // Both flows are supported. Wallet shows up first because the
+        // PrivyProvider config sets `showWalletLoginFirst: true`. Users
+        // who only have email get a magic-link / OTP path; their Privy
+        // DID still uniquely identifies them, and the bridge route
+        // doesn't care how they authenticated.
+        loginMethods: ["email", "wallet"],
         embeddedWallets: {
           ethereum: { createOnLogin: "off" },
           solana: { createOnLogin: "off" },

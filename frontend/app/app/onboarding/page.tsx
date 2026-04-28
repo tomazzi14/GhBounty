@@ -18,12 +18,27 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import type { Role } from "@/lib/types";
 
+function readRoleHint(): Role {
+  if (typeof window === "undefined") return "company";
+  const r = window.localStorage.getItem("privyRole");
+  return r === "dev" ? "dev" : "company";
+}
+
 export default function OnboardingPage() {
   const { user, ready, registerCompany, registerDev } = useAuth();
-  const [role, setRole] = useState<Role>("company");
+  // Stays null until the mount effect below runs, so we never render the
+  // wrong form for the first frame. PrivyLoginButton sets `privyRole` in
+  // localStorage during sign-in; this just respects that choice.
+  const [role, setRole] = useState<Role | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+
+  // Hydrate the role hint client-side (avoids SSR/CSR mismatch on
+  // localStorage).
+  useEffect(() => {
+    setRole(readRoleHint());
+  }, []);
 
   // Returning user with a profile — bounce out.
   useEffect(() => {
@@ -108,7 +123,7 @@ export default function OnboardingPage() {
     }
   }
 
-  if (!ready) {
+  if (!ready || role === null) {
     return (
       <div className="app-loading">
         <span className="loading-dot" />
