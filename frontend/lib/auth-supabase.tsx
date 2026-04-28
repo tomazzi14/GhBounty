@@ -44,7 +44,7 @@ async function loadUser(supabase: DBClient, userId: string): Promise<User | null
     return {
       id: profile.user_id,
       role: "company",
-      email: profile.email,
+      email: profile.email ?? "",
       name: company.name,
       description: company.description,
       website: company.website ?? undefined,
@@ -63,7 +63,7 @@ async function loadUser(supabase: DBClient, userId: string): Promise<User | null
   return {
     id: profile.user_id,
     role: "dev",
-    email: profile.email,
+    email: profile.email ?? "",
     username: dev.username,
     bio: dev.bio ?? undefined,
     github: dev.github_handle ?? undefined,
