@@ -57,6 +57,62 @@ function slugify(s: string): string {
     .slice(0, 64);
 }
 
+async function persistCompanyRow(
+  supabase: DBClient,
+  privyId: string,
+  data: Omit<Company, "id" | "role" | "createdAt">,
+): Promise<void> {
+  const { error: profileErr } = await supabase.from("profiles").insert({
+    user_id: privyId,
+    role: "company",
+    email: data.email || null,
+    onboarding_completed: true,
+  });
+  // 23505 = unique_violation: profile already exists, OK to skip and
+  // proceed to inserting/updating the role-specific row.
+  if (profileErr && profileErr.code !== "23505") {
+    throw new Error(`profiles insert: ${profileErr.message}`);
+  }
+
+  const slug = slugify(data.name) || privyId.slice(-8);
+  const { error: companyErr } = await supabase.from("companies").insert({
+    user_id: privyId,
+    name: data.name,
+    slug,
+    description: data.description,
+    website: data.website ?? null,
+    industry: data.industry ?? null,
+    logo_url: data.avatarUrl ?? null,
+  });
+  if (companyErr) throw new Error(`companies insert: ${companyErr.message}`);
+}
+
+async function persistDevRow(
+  supabase: DBClient,
+  privyId: string,
+  data: Omit<Dev, "id" | "role" | "createdAt">,
+): Promise<void> {
+  const { error: profileErr } = await supabase.from("profiles").insert({
+    user_id: privyId,
+    role: "dev",
+    email: data.email || null,
+    onboarding_completed: true,
+  });
+  if (profileErr && profileErr.code !== "23505") {
+    throw new Error(`profiles insert: ${profileErr.message}`);
+  }
+
+  const { error: devErr } = await supabase.from("developers").insert({
+    user_id: privyId,
+    username: data.username,
+    github_handle: data.github ?? null,
+    bio: data.bio ?? null,
+    skills: data.skills,
+    avatar_url: data.avatarUrl ?? null,
+  });
+  if (devErr) throw new Error(`developers insert: ${devErr.message}`);
+}
+
 async function loadUser(supabase: DBClient, userId: string): Promise<User | null> {
   const { data: profile } = await supabase
     .from("profiles")
@@ -104,12 +160,28 @@ async function loadUser(supabase: DBClient, userId: string): Promise<User | null
   } satisfies Dev;
 }
 
+/**
+ * Linear sign-up flow. The user fills the form on /app/auth, then clicks
+ * "Create account" which:
+ *   1. Saves the form data here (we can't insert yet — no Privy auth = no JWT).
+ *   2. Triggers the Privy modal.
+ *   3. Once Privy authenticates and `privy.user.id` is available, the
+ *      hydration effect consumes the pending data and persists it.
+ *
+ * Stored as a ref-attached field so the consume-once semantics survive
+ * re-renders without triggering them.
+ */
+type PendingRegistration =
+  | { role: "company"; data: Omit<Company, "id" | "role" | "createdAt"> }
+  | { role: "dev"; data: Omit<Dev, "id" | "role" | "createdAt"> };
+
 function PrivyAuthInner({ children }: { children: ReactNode }) {
   const privy = usePrivy();
   const supabase = useMemo<DBClient>(() => createClient(), []);
   const [user, setUser] = useState<User | null>(null);
   const [hydrating, setHydrating] = useState(false);
   const lastUserIdRef = useRef<string | null>(null);
+  const pendingRef = useRef<PendingRegistration | null>(null);
 
   // Step 1: register the Privy access-token getter with the Supabase bridge.
   // The supabase client uses `getSupabaseAccessToken()` on every request, so
@@ -123,8 +195,13 @@ function PrivyAuthInner({ children }: { children: ReactNode }) {
     }
   }, [privy.ready, privy.authenticated, privy]);
 
-  // Step 2: hydrate User from Supabase once Privy is authenticated. If there's
-  // no profile row yet, leave `user` null — that signals "needs onboarding".
+  // Step 2: hydrate User from Supabase once Privy is authenticated.
+  //   - Returning user → loadUser fetches the existing profile.
+  //   - First-time user with `pendingRef` → run the persist + reload.
+  //   - First-time user without pendingRef → leave user null;
+  //     `pendingOnboarding` flips true and the route layer sends them
+  //     to /app/onboarding (fallback path; the wizard on /app/auth
+  //     should populate pendingRef in the happy path).
   useEffect(() => {
     let cancelled = false;
     const privyId = privy.user?.id ?? null;
@@ -135,12 +212,32 @@ function PrivyAuthInner({ children }: { children: ReactNode }) {
       setUser(null);
       return;
     }
-    // Avoid duplicate work if the same user is still authenticated.
-    if (lastUserIdRef.current === privyId && user) return;
+    // Avoid duplicate work if the same user is still authenticated and
+    // already hydrated. Pending registrations always re-run.
+    if (lastUserIdRef.current === privyId && user && !pendingRef.current) return;
 
     setHydrating(true);
     void (async () => {
-      const u = await loadUser(supabase, privyId);
+      const pending = pendingRef.current;
+      let u: User | null = await loadUser(supabase, privyId);
+
+      if (!u && pending) {
+        // First time the wallet hits Supabase — persist what the user
+        // filled in on /app/auth, then re-load.
+        try {
+          if (pending.role === "company") {
+            await persistCompanyRow(supabase, privyId, pending.data);
+          } else {
+            await persistDevRow(supabase, privyId, pending.data);
+          }
+          u = await loadUser(supabase, privyId);
+        } catch (err) {
+          console.error("[auth-privy] persist on auth failed:", err);
+        } finally {
+          pendingRef.current = null;
+        }
+      }
+
       if (cancelled) return;
       lastUserIdRef.current = privyId;
       setUser(u);
@@ -168,99 +265,45 @@ function PrivyAuthInner({ children }: { children: ReactNode }) {
     return null;
   }, [privy]);
 
-  const persistCompany = useCallback(
-    async (
-      data: Omit<Company, "id" | "role" | "createdAt">,
-    ): Promise<Company | null> => {
+  // Linear flow: caller fills the form on /app/auth, calls register*.
+  //   - Already authed (returning user via /app/auth, no profile yet) →
+  //     persist immediately and update user state.
+  //   - Not authed (first-time signup) → stash the form data in
+  //     `pendingRef` and pop the Privy modal. The hydration effect runs
+  //     on the resulting authenticated event, sees the pending data,
+  //     and finishes the persist + load.
+  const registerCompany = useCallback(
+    async (data: Omit<Company, "id" | "role" | "createdAt">): Promise<Company | null> => {
+      if (!privy.authenticated) {
+        pendingRef.current = { role: "company", data };
+        privy.login();
+        return null;
+      }
       const privyId = privy.user?.id;
       if (!privyId) return null;
-
-      const { error: profileErr } = await supabase.from("profiles").insert({
-        user_id: privyId,
-        role: "company",
-        email: data.email || null,
-        onboarding_completed: true,
-      });
-      if (profileErr && profileErr.code !== "23505") {
-        // 23505 = unique_violation: profile already exists, OK to upsert below.
-        throw new Error(`profiles insert: ${profileErr.message}`);
-      }
-
-      const slug = slugify(data.name) || privyId.slice(-8);
-      const { error: companyErr } = await supabase.from("companies").insert({
-        user_id: privyId,
-        name: data.name,
-        slug,
-        description: data.description,
-        website: data.website ?? null,
-        industry: data.industry ?? null,
-        logo_url: data.avatarUrl ?? null,
-      });
-      if (companyErr) throw new Error(`companies insert: ${companyErr.message}`);
-
+      await persistCompanyRow(supabase, privyId, data);
       const u = await loadUser(supabase, privyId);
       if (u && u.role === "company") setUser(u);
       return (u as Company) ?? null;
     },
-    [supabase, privy.user?.id],
-  );
-
-  const persistDev = useCallback(
-    async (
-      data: Omit<Dev, "id" | "role" | "createdAt">,
-    ): Promise<Dev | null> => {
-      const privyId = privy.user?.id;
-      if (!privyId) return null;
-
-      const { error: profileErr } = await supabase.from("profiles").insert({
-        user_id: privyId,
-        role: "dev",
-        email: data.email || null,
-        onboarding_completed: true,
-      });
-      if (profileErr && profileErr.code !== "23505") {
-        throw new Error(`profiles insert: ${profileErr.message}`);
-      }
-
-      const { error: devErr } = await supabase.from("developers").insert({
-        user_id: privyId,
-        username: data.username,
-        github_handle: data.github ?? null,
-        bio: data.bio ?? null,
-        skills: data.skills,
-        avatar_url: data.avatarUrl ?? null,
-      });
-      if (devErr) throw new Error(`developers insert: ${devErr.message}`);
-
-      const u = await loadUser(supabase, privyId);
-      if (u && u.role === "dev") setUser(u);
-      return (u as Dev) ?? null;
-    },
-    [supabase, privy.user?.id],
-  );
-
-  const registerCompany = useCallback(
-    async (data: Omit<Company, "id" | "role" | "createdAt">): Promise<Company | null> => {
-      // If the user hasn't authed with Privy yet, kick off the modal. The
-      // caller should re-invoke once `privy.authenticated` flips true.
-      if (!privy.authenticated) {
-        privy.login();
-        return null;
-      }
-      return persistCompany(data);
-    },
-    [privy, persistCompany],
+    [supabase, privy],
   );
 
   const registerDev = useCallback(
     async (data: Omit<Dev, "id" | "role" | "createdAt">): Promise<Dev | null> => {
       if (!privy.authenticated) {
+        pendingRef.current = { role: "dev", data };
         privy.login();
         return null;
       }
-      return persistDev(data);
+      const privyId = privy.user?.id;
+      if (!privyId) return null;
+      await persistDevRow(supabase, privyId, data);
+      const u = await loadUser(supabase, privyId);
+      if (u && u.role === "dev") setUser(u);
+      return (u as Dev) ?? null;
     },
-    [privy, persistDev],
+    [supabase, privy],
   );
 
   const updateUser = useCallback(
