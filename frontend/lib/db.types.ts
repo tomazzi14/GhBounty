@@ -104,23 +104,38 @@ export type Database = {
         Relationships: [];
       };
       issues: {
+        // bigint columns travel as strings over PostgREST.
         Row: {
           id: string;
           chain_id: string;
           pda: string;
-          bounty_onchain_id: number;
+          bounty_onchain_id: string;
           creator: string;
           scorer: string;
           mint: string;
-          amount: number;
+          amount: string;
           state: "open" | "resolved" | "cancelled";
           submission_count: number;
           winner: string | null;
           github_issue_url: string;
           created_at: string;
         };
-        Insert: never;
-        Update: never;
+        Insert: {
+          id?: string;
+          chain_id: string;
+          pda: string;
+          bounty_onchain_id: string;
+          creator: string;
+          scorer: string;
+          mint: string;
+          amount: string;
+          state?: "open" | "resolved" | "cancelled";
+          submission_count?: number;
+          winner?: string | null;
+          github_issue_url: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["issues"]["Insert"]>;
         Relationships: [];
       };
       submissions: {
@@ -150,6 +165,10 @@ export type Database = {
           release_mode: "auto" | "assisted";
           closed_by_user: boolean;
           created_by_user_id: string | null;
+          // GHB-95
+          reject_threshold: number | null;
+          // GHB-98
+          evaluation_criteria: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -160,6 +179,8 @@ export type Database = {
           release_mode?: "auto" | "assisted";
           closed_by_user?: boolean;
           created_by_user_id?: string | null;
+          reject_threshold?: number | null;
+          evaluation_criteria?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["bounty_meta"]["Insert"]>;
         Relationships: [];
