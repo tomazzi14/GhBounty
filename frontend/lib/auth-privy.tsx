@@ -483,9 +483,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // DID still uniquely identifies them, and the bridge route
         // doesn't care how they authenticated.
         loginMethods: ["email", "wallet"],
+        // GHB-165 follow-up: when a user signs in with only an email (no
+        // external wallet connected), Privy mints them an embedded Solana
+        // wallet on first login. This is what unlocks payouts for devs
+        // who don't have Phantom/Solflare yet — they get a custodial wallet
+        // tied to the Privy DID without leaving the signup flow.
+        //
+        // `users-without-wallets` only fires when the user has no linked
+        // external wallet, so Phantom users don't end up with two wallets.
+        // Ethereum stays off until we ship Base support (project SCALE).
         embeddedWallets: {
           ethereum: { createOnLogin: "off" },
-          solana: { createOnLogin: "off" },
+          solana: { createOnLogin: "users-without-wallets" },
         },
         externalWallets: {
           solana: { connectors: solanaConnectors },
