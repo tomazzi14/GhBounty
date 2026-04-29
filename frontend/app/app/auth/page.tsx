@@ -1,26 +1,53 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useAuth } from "@/lib/auth";
+import { useAuth, usePrivyBackend } from "@/lib/auth-context";
 import { AvatarUploader } from "@/components/AvatarUploader";
-import { PrivyLoginButton, PrivyAvailable } from "@/components/PrivyLoginButton";
 import type { Role } from "@/lib/types";
 
 type Mode = "login" | "register";
 
+/**
+ * GHB-165: unified auth page.
+ *
+ * Privy-mode flow (default once NEXT_PUBLIC_USE_PRIVY=1):
+ *   1. User picks Login or Sign up.
+ *   2. Sign up → role picker (Company / Dev cards) → role-specific form.
+ *   3. Submit calls registerCompany / registerDev which stashes the form
+ *      data, pops the Privy modal, and persists post-auth automatically
+ *      via the auth-privy effect. The page just watches for `user` to
+ *      flip non-null and redirects to the dashboard.
+ *   4. Login → "Connect wallet" button → Privy modal → existing profile
+ *      hydrates from Supabase and lands on /app/{company,dev}.
+ *
+ * Legacy Supabase-Auth mode: the original email/password forms are still
+ * rendered when usePrivyBackend is false, so anyone running the old
+ * config keeps working.
+ */
 export default function AuthPage() {
   const [mode, setMode] = useState<Mode>("register");
   const [role, setRole] = useState<Role>("company");
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [avatar, setAvatar] = useState<string | undefined>(undefined);
-  const { loginByEmail, registerCompany, registerDev } = useAuth();
+  const { user, ready, loginByEmail, registerCompany, registerDev } = useAuth();
   const router = useRouter();
+
+  const privyMode = usePrivyBackend;
 
   function redirectAfter(role: Role) {
     router.replace(role === "company" ? "/app/company" : "/app/dev");
   }
+
+  // GHB-165: in Privy mode the persist happens asynchronously after the
+  // user signs in the modal. Watch `user` and bounce out as soon as the
+  // profile is hydrated. Returning users hit this path immediately too.
+  useEffect(() => {
+    if (!ready) return;
+    if (user) redirectAfter(user.role);
+  }, [ready, user]);
 
   async function onLogin(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -54,10 +81,15 @@ export default function AuthPage() {
     const email = get("email");
     const password = get("password");
     const description = get("description");
-    if (!name || !email || !description) {
-      setError("Name, email and description are required.");
+    if (!name || !description) {
+      setError("Name and description are required.");
       return;
     }
+    if (!privyMode && !email) {
+      setError("Email is required.");
+      return;
+    }
+    setSubmitting(true);
     try {
       const result = await registerCompany(
         {
@@ -70,6 +102,12 @@ export default function AuthPage() {
         },
         password,
       );
+      if (privyMode) {
+        // Privy modal is open now; persist will run after sign-in. The
+        // useEffect on `user` redirects when ready. Don't reset
+        // `submitting` so the button stays disabled while we wait.
+        return;
+      }
       if (!result) {
         setError("Account created — check your email to confirm before signing in.");
         return;
@@ -77,6 +115,8 @@ export default function AuthPage() {
       redirectAfter("company");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed.");
+    } finally {
+      if (!privyMode) setSubmitting(false);
     }
   }
 
@@ -89,14 +129,19 @@ export default function AuthPage() {
     const username = get("username");
     const email = get("email");
     const password = get("password");
-    if (!username || !email) {
-      setError("Username and email are required.");
+    if (!username) {
+      setError("Username is required.");
+      return;
+    }
+    if (!privyMode && !email) {
+      setError("Email is required.");
       return;
     }
     const skills = get("skills")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+    setSubmitting(true);
     try {
       const result = await registerDev(
         {
@@ -109,6 +154,7 @@ export default function AuthPage() {
         },
         password,
       );
+      if (privyMode) return;
       if (!result) {
         setError("Account created — check your email to confirm before signing in.");
         return;
@@ -116,7 +162,17 @@ export default function AuthPage() {
       redirectAfter("dev");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed.");
+    } finally {
+      if (!privyMode) setSubmitting(false);
     }
+  }
+
+  // Privy login = no form, just the modal trigger.
+  function onPrivyLogin() {
+    setSubmitting(true);
+    // Calling loginByEmail with no args triggers privy.login() in Privy
+    // mode. The user redirect happens via the `user` effect above.
+    void loginByEmail("", "");
   }
 
   return (
@@ -152,7 +208,7 @@ export default function AuthPage() {
             }}
             type="button"
           >
-            Register
+            Sign up
           </button>
           <button
             className={`auth-toggle-btn ${mode === "login" ? "active" : ""}`}
@@ -206,7 +262,25 @@ export default function AuthPage() {
 
         {error && <div className="form-error">{error}</div>}
 
-        {mode === "login" ? (
+        {/* Privy-mode Login: single wallet button, no form */}
+        {mode === "login" && privyMode && (
+          <div className="auth-form">
+            <p className="auth-hint">
+              Use the same wallet you signed up with.
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary auth-submit"
+              onClick={onPrivyLogin}
+              disabled={submitting}
+            >
+              {submitting ? "Connecting…" : "Connect wallet"}
+            </button>
+          </div>
+        )}
+
+        {/* Legacy Supabase-Auth Login: email + password */}
+        {mode === "login" && !privyMode && (
           <form onSubmit={onLogin} className="auth-form">
             <label className="field">
               <span className="field-label">Email</span>
@@ -228,19 +302,14 @@ export default function AuthPage() {
                 minLength={6}
               />
             </label>
-            <p className="auth-hint">
-              Demo (mock mode): try <code>dev@ghbounty.xyz</code> or{" "}
-              <code>builders@avalabs.org</code>. Password ignored in mock.
-            </p>
             <button className="btn btn-primary auth-submit" type="submit">
               Log in
             </button>
-            <PrivyAvailable>
-              <div className="auth-divider"><span>or</span></div>
-              <PrivyLoginButton role="company" label="Connect wallet" />
-            </PrivyAvailable>
           </form>
-        ) : role === "company" ? (
+        )}
+
+        {/* Register: Company */}
+        {mode === "register" && role === "company" && (
           <form onSubmit={onRegisterCompany} className="auth-form">
             <AvatarUploader
               value={avatar}
@@ -254,26 +323,30 @@ export default function AuthPage() {
                 <input name="name" placeholder="Your company name" required />
               </label>
               <label className="field">
-                <span className="field-label">Email *</span>
+                <span className="field-label">
+                  Email {privyMode ? "" : "*"}
+                </span>
                 <input
                   name="email"
                   type="email"
                   placeholder="builders@company.com"
-                  required
+                  required={!privyMode}
                 />
               </label>
             </div>
-            <label className="field">
-              <span className="field-label">Password *</span>
-              <input
-                name="password"
-                type="password"
-                placeholder="At least 6 characters"
-                autoComplete="new-password"
-                minLength={6}
-                required
-              />
-            </label>
+            {!privyMode && (
+              <label className="field">
+                <span className="field-label">Password *</span>
+                <input
+                  name="password"
+                  type="password"
+                  placeholder="At least 6 characters"
+                  autoComplete="new-password"
+                  minLength={6}
+                  required
+                />
+              </label>
+            )}
             <div className="field-row">
               <label className="field">
                 <span className="field-label">Website</span>
@@ -294,17 +367,28 @@ export default function AuthPage() {
               />
             </label>
             <p className="auth-hint">
-              You&apos;ll connect your treasury wallet right after signup.
+              {privyMode
+                ? "Click below to connect your wallet — your profile saves automatically once you sign."
+                : "You'll connect your treasury wallet right after signup."}
             </p>
-            <button className="btn btn-primary auth-submit" type="submit">
-              Create company account
+            <button
+              type="submit"
+              className="btn btn-primary auth-submit"
+              disabled={submitting}
+            >
+              {submitting
+                ? privyMode
+                  ? "Waiting for wallet…"
+                  : "Creating…"
+                : privyMode
+                  ? "Connect wallet & create company"
+                  : "Create company account"}
             </button>
-            <PrivyAvailable>
-              <div className="auth-divider"><span>or</span></div>
-              <PrivyLoginButton role="company" label="Connect company wallet" />
-            </PrivyAvailable>
           </form>
-        ) : (
+        )}
+
+        {/* Register: Dev */}
+        {mode === "register" && role === "dev" && (
           <form onSubmit={onRegisterDev} className="auth-form">
             <AvatarUploader
               value={avatar}
@@ -319,26 +403,30 @@ export default function AuthPage() {
                 <input name="username" placeholder="opus-builder" required />
               </label>
               <label className="field">
-                <span className="field-label">Email *</span>
+                <span className="field-label">
+                  Email {privyMode ? "" : "*"}
+                </span>
                 <input
                   name="email"
                   type="email"
                   placeholder="you@mail.com"
-                  required
+                  required={!privyMode}
                 />
               </label>
             </div>
-            <label className="field">
-              <span className="field-label">Password *</span>
-              <input
-                name="password"
-                type="password"
-                placeholder="At least 6 characters"
-                autoComplete="new-password"
-                minLength={6}
-                required
-              />
-            </label>
+            {!privyMode && (
+              <label className="field">
+                <span className="field-label">Password *</span>
+                <input
+                  name="password"
+                  type="password"
+                  placeholder="At least 6 characters"
+                  autoComplete="new-password"
+                  minLength={6}
+                  required
+                />
+              </label>
+            )}
             <div className="field-row">
               <label className="field">
                 <span className="field-label">GitHub handle</span>
@@ -354,18 +442,27 @@ export default function AuthPage() {
               <textarea name="bio" rows={3} placeholder="What you build." />
             </label>
             <p className="auth-hint">
-              You&apos;ll connect your payout wallet right after signup.
+              {privyMode
+                ? "Click below to connect your wallet — your profile saves automatically once you sign."
+                : "You'll connect your payout wallet right after signup."}
             </p>
-            <button className="btn btn-primary auth-submit" type="submit">
-              Create developer account
+            <button
+              type="submit"
+              className="btn btn-primary auth-submit"
+              disabled={submitting}
+            >
+              {submitting
+                ? privyMode
+                  ? "Waiting for wallet…"
+                  : "Creating…"
+                : privyMode
+                  ? "Connect wallet & create developer"
+                  : "Create developer account"}
             </button>
-            <PrivyAvailable>
-              <div className="auth-divider"><span>or</span></div>
-              <PrivyLoginButton role="dev" label="Connect dev wallet" />
-            </PrivyAvailable>
           </form>
         )}
       </div>
     </div>
   );
 }
+
