@@ -13,12 +13,19 @@ import { AvatarUploader } from "@/components/AvatarUploader";
  * we go straight through Supabase Auth (email + password).
  */
 export default function SignupCompanyPage() {
-  const { user, ready, registerCompany } = useAuth();
+  const { user, ready, registerCompany, pendingError, clearPendingError } = useAuth();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avatar, setAvatar] = useState<string | undefined>(undefined);
   const privyMode = usePrivyBackend;
+
+  // If the post-auth persist failed (constraint, RLS, etc.) we'd otherwise
+  // be stuck on "Waiting for wallet…". Drop the submitting state so the
+  // user can fix the input and retry.
+  useEffect(() => {
+    if (pendingError) setSubmitting(false);
+  }, [pendingError]);
 
   // Once Privy auth + persist completes, the user object hydrates and we
   // bounce out to the dashboard. The form is hidden by the redirect.
@@ -32,6 +39,7 @@ export default function SignupCompanyPage() {
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    clearPendingError?.();
     const f = e.currentTarget;
     const get = (n: string) =>
       (f.elements.namedItem(n) as HTMLInputElement | HTMLTextAreaElement)?.value.trim() ?? "";
@@ -98,7 +106,9 @@ export default function SignupCompanyPage() {
           </p>
         </div>
 
-        {error && <div className="form-error">{error}</div>}
+        {(error || pendingError) && (
+          <div className="form-error">{error ?? pendingError}</div>
+        )}
 
         <form onSubmit={onSubmit} className="auth-form">
           <AvatarUploader

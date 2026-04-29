@@ -6,17 +6,31 @@ import Link from "next/link";
 import { useAuth, usePrivyBackend } from "@/lib/auth-context";
 import { AvatarUploader } from "@/components/AvatarUploader";
 
+// Mirror of the DB CHECK constraint `developers_username_format`.
+// Kept as a plain string instead of an HTML5 `pattern` attribute because
+// some browsers parse `pattern` with the unicodeSets (`/v`) flag, which
+// rejects `[a-z0-9_-]` for the way the dash sits between two ranges.
+// Validating in JS sidesteps the parser quirk and keeps DB + UI in sync.
+const USERNAME_REGEX = /^[a-z0-9][a-z0-9_-]{1,38}$/;
+
 /**
  * Developer signup form. Same pattern as the company form: stash + open
  * Privy in Privy mode, or full Supabase-Auth path in legacy mode.
  */
 export default function SignupDevPage() {
-  const { user, ready, registerDev } = useAuth();
+  const { user, ready, registerDev, pendingError, clearPendingError } = useAuth();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [avatar, setAvatar] = useState<string | undefined>(undefined);
   const privyMode = usePrivyBackend;
+
+  // If the post-auth persist failed (constraint, RLS, etc.) we'd otherwise
+  // be stuck on "Waiting for wallet…". Drop the submitting state so the
+  // user can fix the input and retry.
+  useEffect(() => {
+    if (pendingError) setSubmitting(false);
+  }, [pendingError]);
 
   useEffect(() => {
     if (!ready) return;
@@ -28,15 +42,25 @@ export default function SignupDevPage() {
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    clearPendingError?.();
     const f = e.currentTarget;
     const get = (n: string) =>
       (f.elements.namedItem(n) as HTMLInputElement | HTMLTextAreaElement)?.value.trim() ?? "";
-    const username = get("username");
+    // Username must be lowercase to satisfy the DB check; the input also
+    // forces lowercase via `style.textTransform`, but a paste can sneak
+    // mixed case in — normalize before we validate.
+    const username = get("username").toLowerCase();
     const email = get("email");
     const password = get("password");
 
     if (!username) {
       setError("Username is required.");
+      return;
+    }
+    if (!USERNAME_REGEX.test(username)) {
+      setError(
+        "Username must be 2–39 characters, lowercase letters/digits, with optional - or _.",
+      );
       return;
     }
     if (!privyMode && (!email || !password)) {
@@ -93,7 +117,9 @@ export default function SignupDevPage() {
           </p>
         </div>
 
-        {error && <div className="form-error">{error}</div>}
+        {(error || pendingError) && (
+          <div className="form-error">{error ?? pendingError}</div>
+        )}
 
         <form onSubmit={onSubmit} className="auth-form">
           <AvatarUploader
@@ -110,7 +136,12 @@ export default function SignupDevPage() {
                 name="username"
                 placeholder="opus-builder"
                 required
-                pattern="^[a-z0-9][a-z0-9_-]{1,38}$"
+                minLength={2}
+                maxLength={39}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                style={{ textTransform: "lowercase" }}
                 disabled={submitting}
               />
             </label>
