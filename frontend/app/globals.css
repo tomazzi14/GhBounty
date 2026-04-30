@@ -1374,8 +1374,10 @@ section { position: relative; padding: 120px 40px; }
 }
 
 .wallet-pill {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--border-strong);
   background: rgba(0, 229, 209, 0.05);
@@ -1383,40 +1385,107 @@ section { position: relative; padding: 120px 40px; }
   font-size: 12.5px;
   color: var(--accent);
 }
+.wallet-pill-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wallet-pill-actions {
+  display: flex;
+  gap: 8px;
+}
 .wallet-icon { color: var(--accent); display: grid; place-items: center; }
 .wallet-pill code { flex: 1; color: var(--accent); font-family: inherit; }
 .wallet-status {
   font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
   color: var(--accent); opacity: 0.85;
 }
-.wallet-withdraw {
+
+/* Shared base for both wallet action buttons (Deposit, Withdraw).
+   Deposit uses the ghost variant to signal "safe, zero-friction"; Withdraw
+   uses the filled accent to signal "actually moves funds out". */
+.wallet-action {
+  flex: 1;
   font-family: var(--font-sans);
-  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
   font-weight: 600;
-  padding: 6px 12px;
+  padding: 8px 14px;
   border-radius: 8px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: #002a26;
   cursor: pointer;
   transition: background-color .12s ease, border-color .12s ease,
               color .12s ease, transform .08s ease;
 }
-.wallet-withdraw:hover:not(:disabled) {
-  background: rgba(0, 229, 209, 0.85);
-  transform: translateY(-1px);
-}
-.wallet-withdraw:active:not(:disabled) { transform: translateY(0); }
-.wallet-withdraw:focus-visible {
+.wallet-action:hover:not(:disabled) { transform: translateY(-1px); }
+.wallet-action:active:not(:disabled) { transform: translateY(0); }
+.wallet-action:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.wallet-withdraw:disabled {
+.wallet-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+  transform: none;
+}
+
+.wallet-deposit {
+  border: 1px solid var(--accent);
   background: transparent;
   color: var(--accent);
 }
+.wallet-deposit:hover:not(:disabled) {
+  background: rgba(0, 229, 209, 0.12);
+}
+
+.wallet-withdraw {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #002a26;
+}
+.wallet-withdraw:hover:not(:disabled) {
+  background: rgba(0, 229, 209, 0.85);
+}
+.wallet-withdraw:disabled {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* Deposit modal — address row + copy button + network warning. */
+.deposit-address {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: rgba(0, 229, 209, 0.05);
+  margin: 4px 0 8px 0;
+}
+.deposit-address code {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--accent);
+  word-break: break-all;
+  line-height: 1.4;
+}
+.deposit-copy {
+  flex-shrink: 0;
+  /* Override `flex: 1` from .wallet-action so the copy button doesn't
+     stretch and crowd the address. */
+  flex-grow: 0;
+}
+.network-warning {
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(255, 165, 0, 0.06);
+  border: 1px solid rgba(255, 165, 0, 0.2);
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-top: 4px;
+}
+.network-warning strong { color: var(--accent); }
 
 /* The "Max" trailing button on the withdraw amount field. The default
    `field-with-icon` wraps a leading <span class="field-icon">; the
