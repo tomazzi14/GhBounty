@@ -28,7 +28,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
-import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
+import {
+  defaultSolanaRpcsPlugin,
+  toSolanaWalletConnectors,
+} from "@privy-io/react-auth/solana";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/client";
 import type { Database } from "./db.types";
@@ -464,6 +467,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <PrivyProvider
       appId={APP_ID}
       config={{
+        // GHB-80: register Solana RPC defaults so `signAndSendTransaction`
+        // can target `solana:devnet` (and mainnet/testnet) without a
+        // "No RPC configuration found" runtime error. The default plugin
+        // ships public RPC URLs; swap in a custom plugin if we ever need
+        // a paid RPC (Helius, QuickNode, etc.).
+        plugins: [defaultSolanaRpcsPlugin()],
         appearance: {
           theme: "dark",
           accentColor: "#00E5D1",
