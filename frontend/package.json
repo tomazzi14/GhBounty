@@ -14,6 +14,7 @@
     "@coral-xyz/anchor": "^0.30.1",
     "@privy-io/react-auth": "^3.22.2",
     "@solana-program/memo": "^0.11.0",
+    "@solana/kit": "^6.8.0",
     "@solana/web3.js": "^1.95.0",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.104.1",
