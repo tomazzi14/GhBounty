@@ -147,9 +147,13 @@ export function CreateBountyForm({
               <circle cx="17" cy="13.5" r="1.5" />
             </svg>
           </span>
-          <code>{company.wallet ? shortWallet(company.wallet) : "wallet not set"}</code>
+          <code>{walletAddress ? shortWallet(walletAddress) : "wallet not set"}</code>
           <span className="wallet-status">
-            {company.wallet ? "Connected" : "—"}
+            {balanceSol !== null
+              ? `${balanceSol.toFixed(4)} SOL`
+              : walletAddress
+                ? "—"
+                : "not connected"}
           </span>
         </div>
 
@@ -170,31 +174,24 @@ export function CreateBountyForm({
           </div>
         </label>
 
-        <div className="field-row">
-          <label className="field">
-            <span className="field-label">Title (optional)</span>
-            <input name="title" placeholder="Short summary of the issue" />
-          </label>
+        <label className="field">
+          <span className="field-label">Title (optional)</span>
+          <input name="title" placeholder="Short summary of the issue" />
+        </label>
 
-          <label className="field">
-            <span className="field-label">
-              Bounty amount <span className="musdc-inline">SOL</span>
-              {balanceSol !== null && (
-                <span className="field-hint">
-                  {" "}· balance {balanceSol.toFixed(4)} SOL
-                </span>
-              )}
-            </span>
-            <input
-              name="amount"
-              type="number"
-              min={0.001}
-              step={0.001}
-              placeholder="0.5"
-              required
-            />
-          </label>
-        </div>
+        <label className="field">
+          <span className="field-label">
+            Bounty amount <span className="musdc-inline">SOL</span>
+          </span>
+          <input
+            name="amount"
+            type="number"
+            min={0.001}
+            step={0.001}
+            placeholder="0.5"
+            required
+          />
+        </label>
 
         <label className="field">
           <span className="field-label">Description (optional)</span>
@@ -210,19 +207,17 @@ export function CreateBountyForm({
           <ReleaseModePicker value={releaseMode} onChange={setReleaseMode} compact />
         </div>
 
-        <div className="field-row">
-          <label className="field">
-            <span className="field-label">Reject threshold (1-10, optional)</span>
-            <input
-              name="rejectThreshold"
-              type="number"
-              min={1}
-              max={10}
-              step={1}
-              placeholder="8"
-            />
-          </label>
-        </div>
+        <label className="field">
+          <span className="field-label">Reject threshold (1-10, optional)</span>
+          <input
+            name="rejectThreshold"
+            type="number"
+            min={1}
+            max={10}
+            step={1}
+            placeholder="8"
+          />
+        </label>
 
         <label className="field">
           <span className="field-label">Evaluation criteria (optional)</span>
