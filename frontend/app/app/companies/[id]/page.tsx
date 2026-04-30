@@ -19,7 +19,11 @@ export default function CompanyDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = use(params);
+  const { id: rawId } = use(params);
+  // Privy DIDs (`did:privy:...`) contain colons that survive a Next.js
+  // dynamic param round-trip in URL-encoded form. Decode defensively so
+  // the Supabase query lookups by `user_id` still match.
+  const id = decodeURIComponent(rawId);
   return (
     <Guard role="dev">
       <Inner id={id} />

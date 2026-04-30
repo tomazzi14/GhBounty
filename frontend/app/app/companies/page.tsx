@@ -95,7 +95,7 @@ function Inner() {
         {cards.map(({ company, total, open, funded }) => (
           <Link
             key={company.id}
-            href={`/app/companies/${company.id}`}
+            href={`/app/companies/${encodeURIComponent(company.id)}`}
             className="company-card"
           >
             <div className="company-card-head">

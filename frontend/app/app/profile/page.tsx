@@ -425,7 +425,10 @@ function SubmissionRow({
     <div className="bounty-card">
       <div className="bounty-card-head">
         {company && (
-          <Link href={`/app/companies/${company.id}`} className="bounty-company">
+          <Link
+            href={`/app/companies/${encodeURIComponent(company.id)}`}
+            className="bounty-company"
+          >
             <Avatar src={company.avatarUrl} name={company.name} size={24} rounded={false} />
             <span className="bounty-company-name">{company.name}</span>
           </Link>
