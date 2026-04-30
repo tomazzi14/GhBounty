@@ -2,15 +2,20 @@
 
 import {
   FormEvent,
+  useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
-  closeBounty,
-  deleteBounty,
+  closeBounty as closeBountyMock,
+  deleteBounty as deleteBountyMock,
   updateBounty,
 } from "@/lib/store";
+import { usePrivyBackend } from "@/lib/auth-context";
+import { closeIssue, deleteIssueAndMeta } from "@/lib/bounties";
+import { createClient } from "@/utils/supabase/client";
 import type { Bounty, ReleaseMode } from "@/lib/types";
 import { ReleaseModePicker } from "./ReleaseModePicker";
 import { UsdcIcon } from "./UsdcIcon";
@@ -24,7 +29,10 @@ export function BountyEditMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [modal, setModal] = useState<"edit" | "close" | "delete" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const privyMode = usePrivyBackend;
 
   useEffect(() => {
     if (!open) return;
@@ -44,6 +52,63 @@ export function BountyEditMenu({
   }, [open]);
 
   const isActionable = bounty.status !== "closed" && bounty.status !== "paid";
+
+  // Memoize dismiss + confirm handlers so the modals' useEffect deps don't
+  // see a fresh function reference on every render. Without this, opening
+  // the modal triggers a tight re-register loop on the keydown listener
+  // and toggles `body.style.overflow`, which combined with `.bounty-card:hover`
+  // creating a containing block for `position: fixed` was producing the
+  // "modal flickers and slides around the screen" bug.
+  const dismissModal = useCallback(() => {
+    if (busy) return;
+    setModal(null);
+    setError(null);
+  }, [busy]);
+
+  const onSaved = useCallback(() => {
+    setModal(null);
+    onChanged();
+  }, [onChanged]);
+
+  const onConfirmClose = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (privyMode) {
+        const supabase = createClient();
+        await closeIssue(supabase, bounty.id);
+      } else {
+        closeBountyMock(bounty.id);
+      }
+      setModal(null);
+      onChanged();
+    } catch (err) {
+      console.error("[BountyEditMenu] close failed:", err);
+      setError(err instanceof Error ? err.message : "Close failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [bounty.id, onChanged, privyMode]);
+
+  const onConfirmDelete = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (privyMode) {
+        const supabase = createClient();
+        await deleteIssueAndMeta(supabase, bounty.id);
+      } else {
+        deleteBountyMock(bounty.id);
+      }
+      setModal(null);
+      onChanged();
+    } catch (err) {
+      console.error("[BountyEditMenu] delete failed:", err);
+      setError(err instanceof Error ? err.message : "Delete failed.");
+    } finally {
+      setBusy(false);
+    }
+  }, [bounty.id, onChanged, privyMode]);
 
   return (
     <>
@@ -121,11 +186,8 @@ export function BountyEditMenu({
       {modal === "edit" && (
         <BountyEditModal
           bounty={bounty}
-          onClose={() => setModal(null)}
-          onSaved={() => {
-            setModal(null);
-            onChanged();
-          }}
+          onClose={dismissModal}
+          onSaved={onSaved}
         />
       )}
 
@@ -134,18 +196,17 @@ export function BountyEditMenu({
           title="Close this bounty?"
           body={
             <>
-              The bounty will stop accepting new PRs. Any pending submissions
-              won&apos;t be paid out. Escrowed funds return to your treasury.
+              The bounty will stop accepting new PRs. Closed bounties hide
+              from the open feed but the on-chain escrow still holds the
+              funds — call <code>cancel_bounty</code> to release them.
             </>
           }
-          confirmLabel="Close bounty"
+          confirmLabel={busy ? "Closing…" : "Close bounty"}
           danger={false}
-          onCancel={() => setModal(null)}
-          onConfirm={() => {
-            closeBounty(bounty.id);
-            setModal(null);
-            onChanged();
-          }}
+          busy={busy}
+          error={error}
+          onCancel={dismissModal}
+          onConfirm={onConfirmClose}
         />
       )}
 
@@ -155,17 +216,17 @@ export function BountyEditMenu({
           body={
             <>
               This permanently removes <code>{bounty.repo} #{bounty.issueNumber}</code>{" "}
-              and any linked submissions from your dashboard. You can&apos;t undo this.
+              from your dashboard. The on-chain account stays as-is —
+              this only hides the bounty from the UI. You can&apos;t undo
+              this.
             </>
           }
-          confirmLabel="Delete"
+          confirmLabel={busy ? "Deleting…" : "Delete"}
           danger
-          onCancel={() => setModal(null)}
-          onConfirm={() => {
-            deleteBounty(bounty.id);
-            setModal(null);
-            onChanged();
-          }}
+          busy={busy}
+          error={error}
+          onCancel={dismissModal}
+          onConfirm={onConfirmDelete}
         />
       )}
     </>
@@ -215,7 +276,7 @@ function BountyEditModal({
     onSaved();
   }
 
-  return (
+  return modalPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" aria-label="Close" onClick={onClose}>
@@ -276,7 +337,7 @@ function BountyEditModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
   );
 }
 
@@ -285,6 +346,8 @@ function ConfirmModal({
   body,
   confirmLabel,
   danger,
+  busy,
+  error,
   onCancel,
   onConfirm,
 }: {
@@ -292,12 +355,14 @@ function ConfirmModal({
   body: React.ReactNode;
   confirmLabel: string;
   danger?: boolean;
+  busy?: boolean;
+  error?: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape" && !busy) onCancel();
     };
     window.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -305,12 +370,21 @@ function ConfirmModal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [onCancel]);
+  }, [onCancel, busy]);
 
-  return (
-    <div className="modal-backdrop" onClick={onCancel}>
+  // Render via portal to escape any ancestor that creates a containing
+  // block for `position: fixed` (notably `.bounty-card:hover` adds a
+  // `transform`, which breaks the modal's viewport-relative anchor and
+  // causes the modal to flicker around the screen as the cursor moves).
+  return modalPortal(
+    <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
       <div className="modal modal-narrow" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" aria-label="Close" onClick={onCancel}>
+        <button
+          className="modal-close"
+          aria-label="Close"
+          onClick={onCancel}
+          disabled={busy}
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M6 6l12 12M18 6L6 18" />
           </svg>
@@ -319,19 +393,32 @@ function ConfirmModal({
           <h2 className="modal-title">{title}</h2>
         </div>
         <p className="modal-note">{body}</p>
+        {error && <div className="form-error">{error}</div>}
         <div className="modal-foot">
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
           <button
             type="button"
             className={`btn ${danger ? "btn-danger" : "btn-primary"}`}
             onClick={onConfirm}
+            disabled={busy}
           >
             {confirmLabel}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
   );
+}
+
+/**
+ * Render the given modal tree at `document.body` so it escapes any
+ * ancestor containing block (transform, filter, will-change, ...). On
+ * the SSR pass `document` is undefined — we just render null until the
+ * client mounts. Modals only matter post-mount anyway.
+ */
+function modalPortal(node: React.ReactElement): React.ReactPortal | null {
+  if (typeof document === "undefined") return null;
+  return createPortal(node, document.body);
 }

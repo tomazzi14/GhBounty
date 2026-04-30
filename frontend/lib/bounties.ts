@@ -110,6 +110,64 @@ export async function insertIssueAndMeta(
 }
 
 /**
+ * Hard-delete a bounty + its meta from Supabase (UI side only — the
+ * on-chain account stays as is). Order matters because of RLS:
+ * `bounty_meta_modify_creator` lets the owner delete their meta, then
+ * `issues_delete_orphan` lets them delete the issue once no meta points
+ * at it.
+ *
+ * This is for the company dashboard's "Delete bounty" action. The
+ * underlying on-chain bounty PDA can't be removed; if the funds are
+ * still escrowed the caller should `cancel_bounty` on-chain first.
+ *
+ * Submissions referencing this bounty (via `issue_pda`) become orphans
+ * — they survive in the `submissions` table but won't be reachable
+ * from the company side. We don't auto-clean them because the dev's
+ * submission_meta is owner-scoped and a company-side delete would hit
+ * RLS errors. Production cleanup belongs in a server-side admin path.
+ */
+export async function deleteIssueAndMeta(
+  supabase: DBClient,
+  issueId: string,
+): Promise<void> {
+  const { error: metaErr } = await supabase
+    .from("bounty_meta")
+    .delete()
+    .eq("issue_id", issueId);
+  if (metaErr) {
+    throw new Error(`bounty_meta delete: ${metaErr.message}`);
+  }
+  const { error: issueErr } = await supabase
+    .from("issues")
+    .delete()
+    .eq("id", issueId);
+  if (issueErr) {
+    // Roll forward best-effort: surface the error but the orphan issue
+    // row will be cleaned by the orphan-delete RLS on retry.
+    throw new Error(`issues delete: ${issueErr.message}`);
+  }
+}
+
+/**
+ * Mark a bounty as closed in `bounty_meta.closed_by_user`. The on-chain
+ * bounty stays Open — funds remain locked until someone calls
+ * `cancel_bounty` or `resolve_bounty`. UI hides closed rows from the
+ * "Open" filter and stops accepting submissions.
+ */
+export async function closeIssue(
+  supabase: DBClient,
+  issueId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("bounty_meta")
+    .update({ closed_by_user: true })
+    .eq("issue_id", issueId);
+  if (error) {
+    throw new Error(`bounty_meta close: ${error.message}`);
+  }
+}
+
+/**
  * List the bounties created by a given user. Joins `bounty_meta` with
  * `issues` and orders by newest first — the shape the company dashboard
  * needs for GHB-81.
