@@ -19,7 +19,14 @@
  */
 
 import type { Bounty, BountyStatus, Company, Dev, Submission } from "./types";
-import { useSupabaseBackend } from "./auth-context";
+import { useSupabaseBackend, usePrivyBackend } from "./auth-context";
+
+/**
+ * GHB-81: Privy mode also persists into Supabase via the JWT bridge, so
+ * the dashboard reads from Supabase whenever EITHER flag is on. Mock
+ * (localStorage) is reserved for the dev-bypass path.
+ */
+const useRealBackend = useSupabaseBackend || usePrivyBackend;
 import {
   bountiesByCompany as mockBountiesByCompany,
   hasDevSubmitted as mockHasDevSubmitted,
@@ -63,7 +70,7 @@ function rowToCompany(row: CompanyRow): Company {
 }
 
 export async function fetchCompanies(): Promise<Company[]> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockLoadUsers().filter((u): u is Company => u.role === "company");
   }
   const supabase = createClient();
@@ -81,7 +88,7 @@ export async function fetchCompanies(): Promise<Company[]> {
 }
 
 export async function fetchCompany(id: string): Promise<Company | null> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return (
       (mockLoadUsers().find((u) => u.role === "company" && u.id === id) as
         | Company
@@ -134,7 +141,7 @@ function rowToDev(row: DevRow): Dev {
 }
 
 export async function fetchDevelopers(): Promise<Dev[]> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockLoadUsers().filter((u): u is Dev => u.role === "dev");
   }
   const supabase = createClient();
@@ -152,7 +159,7 @@ export async function fetchDevelopers(): Promise<Dev[]> {
 }
 
 export async function fetchDeveloper(id: string): Promise<Dev | null> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return (
       (mockLoadUsers().find((u) => u.role === "dev" && u.id === id) as
         | Dev
@@ -217,8 +224,12 @@ function deriveStatus(
   return "open";
 }
 
-/** USDC has 6 decimals; mock devnet token uses the same. */
-const TOKEN_DECIMALS = 6;
+/**
+ * On-chain amounts are stored in lamports (native SOL has 9 decimals).
+ * GHB-80 ships with SOL-only bounties; once SPL/USDC is added we'll need
+ * to switch on `issues.mint` to pick the right decimals.
+ */
+const SOL_DECIMALS = 9;
 
 function rowToBounty(row: IssueRow): Bounty {
   const { repo, issueNumber } = parseGithubIssueUrl(row.github_issue_url);
@@ -232,7 +243,7 @@ function rowToBounty(row: IssueRow): Bounty {
     issueNumber,
     issueUrl: row.github_issue_url,
     title: meta?.title ?? undefined,
-    amountUsdc: amountRaw / 10 ** TOKEN_DECIMALS,
+    amountUsdc: amountRaw / 10 ** SOL_DECIMALS,
     status: deriveStatus(
       row.state,
       meta?.closed_by_user ?? false,
@@ -244,7 +255,7 @@ function rowToBounty(row: IssueRow): Bounty {
 }
 
 export async function fetchBounties(): Promise<Bounty[]> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockLoadBounties();
   }
   const supabase = createClient();
@@ -261,7 +272,7 @@ export async function fetchBounties(): Promise<Bounty[]> {
 }
 
 export async function fetchBounty(id: string): Promise<Bounty | null> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockLoadBounties().find((b) => b.id === id) ?? null;
   }
   const supabase = createClient();
@@ -280,7 +291,7 @@ export async function fetchBounty(id: string): Promise<Bounty | null> {
 export async function fetchBountiesByCompany(
   companyId: string,
 ): Promise<Bounty[]> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockBountiesByCompany(companyId);
   }
   const supabase = createClient();
@@ -364,7 +375,7 @@ async function resolveIssueIdsByPda(
 export async function fetchSubmissionsByBounty(
   bountyId: string,
 ): Promise<Submission[]> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockSubmissionsByBounty(bountyId);
   }
   const supabase = createClient();
@@ -390,7 +401,7 @@ export async function fetchSubmissionsByBounty(
 export async function fetchSubmissionsByDev(
   devId: string,
 ): Promise<Submission[]> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockSubmissionsByDev(devId);
   }
   const supabase = createClient();
@@ -429,7 +440,7 @@ export async function hasDevSubmitted(
   devId: string,
   bountyId: string,
 ): Promise<boolean> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return mockHasDevSubmitted(devId, bountyId);
   }
   const subs = await fetchSubmissionsByBounty(bountyId);
@@ -446,7 +457,7 @@ export interface MarketplaceData {
 }
 
 export async function fetchMarketplace(): Promise<MarketplaceData> {
-  if (!useSupabaseBackend) {
+  if (!useRealBackend) {
     return {
       bounties: mockLoadBounties(),
       companies: mockLoadUsers().filter(
