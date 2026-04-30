@@ -167,7 +167,15 @@ export function SubmitPRModal({ bounty, devId, onClose, onSubmitted }: Props) {
 
       const connection: Connection = getConnection();
       const solver = new PublicKey(walletAddress);
-      const bountyPda = new PublicKey(bounty.id);
+      // `bounty.pda` is the on-chain address; `bounty.id` is a Postgres UUID
+      // in the Supabase-backed flow. Always reach for `pda` first; fall back
+      // to `id` only for legacy localStorage rows where the mock overloaded
+      // `id` with the PDA.
+      const bountyPdaStr = bounty.pda ?? bounty.id;
+      if (!bountyPdaStr) {
+        throw new Error("Bounty has no on-chain address.");
+      }
+      const bountyPda = new PublicKey(bountyPdaStr);
 
       // PHASE_BUILD: build the unsigned instruction. Reads
       // `submission_count` on-chain to derive the next submission PDA.
@@ -217,7 +225,7 @@ export function SubmitPRModal({ bounty, devId, onClose, onSubmitted }: Props) {
       const supabase = createClient();
       await insertSubmissionAndMeta(supabase, {
         chainId: CHAIN_ID,
-        issuePda: bounty.id,
+        issuePda: bountyPdaStr,
         pda: pda.toBase58(),
         solver: walletAddress,
         submissionIndex,

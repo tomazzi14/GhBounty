@@ -222,6 +222,7 @@ export function CreateBountyFlow({
       // localStorage so the existing UI keeps working.
       const bounty: Bounty = {
         id: pda.toBase58(),
+        pda: pda.toBase58(),
         companyId: company.id,
         repo: data.repo,
         issueNumber: data.issueNumber,
