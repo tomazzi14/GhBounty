@@ -104,14 +104,20 @@ export function BountyEditMenu({
     }
   }, [bounty.id, onChanged, privyMode]);
 
-  // Delete = "cancel & forget":
-  //   1. If the bounty is still Open on-chain, call `cancel_bounty` so the
-  //      escrow returns to the creator's Privy wallet. This is the only way
-  //      to recover the locked SOL — without it, deleting the row leaves the
-  //      lamports stuck in the bounty PDA forever.
-  //   2. Once the cancel is confirmed (or skipped because the bounty is
-  //      already cancelled / resolved / not yet on-chain), remove the
-  //      Supabase rows so the dashboard stops showing it.
+  // Delete = always cancel + always remove. Single button, single intent:
+  // if the user wants the bounty gone, the escrowed SOL must come back —
+  // there's no scenario where leaving funds locked is desirable.
+  //
+  //   1. Sign + send `cancel_bounty`. The program enforces `state == Open`,
+  //      so we get a `BountyNotOpen` revert when the bounty was already
+  //      cancelled or resolved on-chain. That branch means the escrow is
+  //      already empty, so we swallow the error and proceed. Wallet
+  //      rejections, network errors, etc. bubble up and abort the delete.
+  //   2. Delete the Supabase rows so the dashboard stops showing it.
+  //
+  // Note: status="closed" (closed_by_user=true) does NOT mean cancelled
+  // on-chain — that path leaves funds locked. Always trying cancel_bounty
+  // covers it correctly.
   //
   // Mock mode (NEXT_PUBLIC_USE_PRIVY off) just hits the localStorage store.
   const onConfirmDelete = useCallback(async () => {
@@ -125,12 +131,9 @@ export function BountyEditMenu({
         return;
       }
 
-      // 1) On-chain cancel — only meaningful if the bounty PDA exists and
-      //    is still Open. Anything else (closed_by_user, resolved on-chain,
-      //    cancelled previously, mock data without pda) skips straight to
-      //    the off-chain cleanup.
-      const canCancelOnChain = !!bounty.pda && bounty.status === "open";
-      if (canCancelOnChain) {
+      // 1) Try the on-chain cancel. Skip the section entirely only if we
+      //    don't have a PDA to cancel against (legacy data, mock seeds).
+      if (bounty.pda) {
         const wallet = wallets[0];
         if (!wallet) {
           throw new Error(
@@ -138,39 +141,62 @@ export function BountyEditMenu({
           );
         }
         setPhase("cancelling");
-        const connection = getConnection();
-        const creator = new PublicKey(wallet.address);
-        const bountyPda = new PublicKey(bounty.pda as string);
 
-        const ix = await buildCancelBountyIx(
-          { creator, bountyPda },
-          connection,
-        );
-        const { blockhash, lastValidBlockHeight } =
-          await connection.getLatestBlockhash("confirmed");
-        const tx = new Transaction({
-          feePayer: creator,
-          recentBlockhash: blockhash,
-        }).add(ix);
-        const serialized = tx.serialize({ requireAllSignatures: false });
+        try {
+          const connection = getConnection();
+          const creator = new PublicKey(wallet.address);
+          const bountyPda = new PublicKey(bounty.pda as string);
 
-        const { signature } = await signAndSendTransaction({
-          transaction: serialized,
-          wallet,
-          chain: "solana:devnet",
-        });
-        const sig = bs58.encode(signature);
+          const ix = await buildCancelBountyIx(
+            { creator, bountyPda },
+            connection,
+          );
+          const { blockhash, lastValidBlockHeight } =
+            await connection.getLatestBlockhash("confirmed");
+          const tx = new Transaction({
+            feePayer: creator,
+            recentBlockhash: blockhash,
+          }).add(ix);
+          const serialized = tx.serialize({ requireAllSignatures: false });
 
-        // `confirmTransaction` resolves even when the program reverted —
-        // it stuffs the program error into `value.err`. Without this check
-        // we'd "succeed" when the chain actually rejected the cancel.
-        const conf = await connection.confirmTransaction(
-          { signature: sig, blockhash, lastValidBlockHeight },
-          "confirmed",
-        );
-        if (conf.value.err) {
-          throw new Error(
-            `cancel_bounty reverted on-chain: ${JSON.stringify(conf.value.err)}`,
+          const { signature } = await signAndSendTransaction({
+            transaction: serialized,
+            wallet,
+            chain: "solana:devnet",
+          });
+          const sig = bs58.encode(signature);
+
+          // `confirmTransaction` resolves even on revert — the program error
+          // ends up in `value.err`. Mirror that into a thrown Error so the
+          // outer try/catch can decide whether it's a "no escrow left"
+          // case or a real failure.
+          const conf = await connection.confirmTransaction(
+            { signature: sig, blockhash, lastValidBlockHeight },
+            "confirmed",
+          );
+          if (conf.value.err) {
+            throw new Error(
+              `cancel_bounty reverted on-chain: ${JSON.stringify(conf.value.err)}`,
+            );
+          }
+        } catch (cancelErr) {
+          // BountyNotOpen / already-settled branch: the escrow is empty,
+          // there's nothing to refund, the off-chain row should still go.
+          // Anything else (wallet rejection, RPC down, real revert) is a
+          // hard failure — abort so the user can retry without orphaning
+          // the on-chain account.
+          const msg =
+            cancelErr instanceof Error ? cancelErr.message : String(cancelErr);
+          const alreadySettled =
+            /BountyNotOpen|already.*(cancel|resolv)|account.*not.*initialized/i.test(
+              msg,
+            );
+          if (!alreadySettled) {
+            throw cancelErr;
+          }
+          console.warn(
+            "[BountyEditMenu] cancel_bounty skipped (already settled):",
+            msg,
           );
         }
       }
@@ -193,7 +219,6 @@ export function BountyEditMenu({
   }, [
     bounty.id,
     bounty.pda,
-    bounty.status,
     onChanged,
     privyMode,
     signAndSendTransaction,
@@ -304,30 +329,20 @@ export function BountyEditMenu({
         <ConfirmModal
           title="Delete this bounty?"
           body={
-            bounty.status === "open" ? (
-              <>
-                This will cancel the bounty on-chain and refund{" "}
-                <strong>{bounty.amountUsdc} SOL</strong> to your Privy wallet,
-                then remove <code>{bounty.repo} #{bounty.issueNumber}</code>{" "}
-                from your dashboard. You&apos;ll be asked to sign one
-                transaction. You can&apos;t undo this.
-              </>
-            ) : (
-              <>
-                This removes <code>{bounty.repo} #{bounty.issueNumber}</code>{" "}
-                from your dashboard. The bounty is no longer Open on-chain,
-                so no refund is owed. You can&apos;t undo this.
-              </>
-            )
+            <>
+              This will cancel the bounty on-chain and refund{" "}
+              <strong>{bounty.amountUsdc} SOL</strong> to your Privy wallet,
+              then remove <code>{bounty.repo} #{bounty.issueNumber}</code>{" "}
+              from your dashboard. You&apos;ll be asked to sign one
+              transaction. You can&apos;t undo this.
+            </>
           }
           confirmLabel={
             phase === "cancelling"
               ? "Cancelling on-chain…"
               : phase === "removing"
                 ? "Removing…"
-                : bounty.status === "open"
-                  ? "Cancel & delete"
-                  : "Delete"
+                : "Delete"
           }
           danger
           busy={busy}
