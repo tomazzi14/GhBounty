@@ -5,6 +5,8 @@ import { useWallets } from "@privy-io/react-auth/solana";
 import { parseIssueUrl } from "@/lib/github";
 import { CreateBountyFlow, type CreateBountyData } from "./CreateBountyFlow";
 import { ReleaseModePicker } from "./ReleaseModePicker";
+import { DepositModal } from "./DepositModal";
+import { WithdrawModal } from "./WithdrawModal";
 import { getConnection } from "@/lib/solana";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { usePrivyBackend } from "@/lib/auth-context";
@@ -13,14 +15,22 @@ import type { Company, ReleaseMode } from "@/lib/types";
 export function CreateBountyForm({
   company,
   onCreated,
+  refreshKey = 0,
 }: {
   company: Company;
   onCreated?: () => void;
+  /** Bumped by the parent dashboard whenever something happens that may
+   * have changed the wallet's SOL balance off-band — e.g. a `cancel_bounty`
+   * refund triggered by the `⋯` menu Delete action. Forces the balance
+   * useEffect to re-run without needing a full unmount. */
+  refreshKey?: number;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [flowData, setFlowData] = useState<CreateBountyData | null>(null);
   const [releaseMode, setReleaseMode] = useState<ReleaseMode>("auto");
   const [balanceSol, setBalanceSol] = useState<number | null>(null);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [depositOpen, setDepositOpen] = useState(false);
   const formRef = useRef<HTMLFormElement | null>(null);
 
   // Wallet (Privy in real mode, fall back to mock store wallet otherwise)
@@ -52,7 +62,7 @@ export function CreateBountyForm({
     return () => {
       cancelled = true;
     };
-  }, [walletAddress]);
+  }, [walletAddress, refreshKey]);
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -140,21 +150,58 @@ export function CreateBountyForm({
         </div>
 
         <div className="wallet-pill">
-          <span className="wallet-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 7h18v13H3z" />
-              <path d="M3 7l2-3h14l2 3" />
-              <circle cx="17" cy="13.5" r="1.5" />
-            </svg>
-          </span>
-          <code>{walletAddress ? shortWallet(walletAddress) : "wallet not set"}</code>
-          <span className="wallet-status">
-            {balanceSol !== null
-              ? `${balanceSol.toFixed(4)} SOL`
-              : walletAddress
-                ? "—"
-                : "not connected"}
-          </span>
+          {/* Row 1: identity + balance. Address truncated for legibility,
+              full string lives in the Deposit modal so users can copy it. */}
+          <div className="wallet-pill-row">
+            <span className="wallet-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 7h18v13H3z" />
+                <path d="M3 7l2-3h14l2 3" />
+                <circle cx="17" cy="13.5" r="1.5" />
+              </svg>
+            </span>
+            <code>
+              {walletAddress ? shortWallet(walletAddress) : "wallet not set"}
+            </code>
+            <span className="wallet-status">
+              {balanceSol !== null
+                ? `${balanceSol.toFixed(4)} SOL`
+                : walletAddress
+                  ? "—"
+                  : "not connected"}
+            </span>
+          </div>
+          {/* Row 2: actions. Deposit is the safer/zero-friction action
+              (just shows your address) so it gets the ghost variant;
+              Withdraw is the filled accent because it actually moves
+              funds out of the in-app wallet. Both stay disabled
+              (instead of hidden) so the layout doesn't reflow as
+              wallet/balance state hydrates. */}
+          <div className="wallet-pill-actions">
+            <button
+              type="button"
+              className="wallet-action wallet-deposit"
+              onClick={() => setDepositOpen(true)}
+              disabled={!privyMode || !walletAddress}
+              title="Receive SOL from an external wallet"
+            >
+              Deposit
+            </button>
+            <button
+              type="button"
+              className="wallet-action wallet-withdraw"
+              onClick={() => setWithdrawOpen(true)}
+              disabled={
+                !privyMode ||
+                !wallets[0] ||
+                balanceSol === null ||
+                balanceSol <= 0
+              }
+              title="Send SOL from your Privy wallet to an external address"
+            >
+              Withdraw
+            </button>
+          </div>
         </div>
 
         <label className="field">
@@ -241,6 +288,30 @@ export function CreateBountyForm({
           data={flowData}
           onClose={handleFlowClose}
           onCreated={handleFlowCreated}
+        />
+      )}
+
+      {withdrawOpen && wallets[0] && (
+        <WithdrawModal
+          wallet={wallets[0]}
+          balanceSol={balanceSol}
+          onClose={() => setWithdrawOpen(false)}
+          // Reuse the parent's `onCreated` signal to bump `tick` — the
+          // dashboard's `tick` flows back into our `refreshKey`, which
+          // refetches the balance. Same plumbing the delete flow uses.
+          onWithdrawn={() => onCreated?.()}
+        />
+      )}
+
+      {depositOpen && walletAddress && (
+        <DepositModal
+          walletAddress={walletAddress}
+          // Hardcoded for MVP — we're locked to devnet via the Privy
+          // `solana:devnet` chain registration in `auth-privy.tsx`.
+          // When mainnet ships, lift this from the Solana RPC env var.
+          network="Solana Devnet"
+          onClose={() => setDepositOpen(false)}
+          onRefresh={() => onCreated?.()}
         />
       )}
     </>
