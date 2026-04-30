@@ -25,7 +25,10 @@ export function BountyRow({
     <div className="bounty-card">
       <div className="bounty-card-head">
         {showCompany && company && (
-          <Link href={`/app/companies/${company.id}`} className="bounty-company">
+          <Link
+            href={`/app/companies/${encodeURIComponent(company.id)}`}
+            className="bounty-company"
+          >
             <Avatar
               src={company.avatarUrl}
               name={company.name}
