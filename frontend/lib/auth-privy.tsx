@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { PrivyProvider, usePrivy } from "@privy-io/react-auth";
 import { toSolanaWalletConnectors } from "@privy-io/react-auth/solana";
+import { createSolanaRpc, createSolanaRpcSubscriptions } from "@solana/kit";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/utils/supabase/client";
 import type { Database } from "./db.types";
@@ -42,6 +43,13 @@ import {
 type DBClient = SupabaseClient<Database>;
 
 const APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID ?? "";
+
+const SOLANA_RPC_URL =
+  process.env.NEXT_PUBLIC_SOLANA_RPC ?? "https://api.devnet.solana.com";
+// Derive the WebSocket subscription URL from the RPC URL the user
+// configured. Public Solana endpoints accept both `https://` and `wss://`
+// on the same host, so we just swap the scheme.
+const SOLANA_WSS_URL = SOLANA_RPC_URL.replace(/^https?:\/\//, "wss://");
 
 const solanaConnectors = toSolanaWalletConnectors({
   shouldAutoConnect: false,
@@ -464,6 +472,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <PrivyProvider
       appId={APP_ID}
       config={{
+        // GHB-80: configure the Solana RPC for `signAndSendTransaction`.
+        // Privy's "default" plugin routes through `*.rpc.privy.systems`,
+        // which is reserved for paid plans and surfaces as a WebSocket
+        // connection failure on free apps. Pointing to a public devnet
+        // RPC explicitly side-steps that path.
+        solana: {
+          rpcs: {
+            "solana:devnet": {
+              rpc: createSolanaRpc(SOLANA_RPC_URL),
+              rpcSubscriptions: createSolanaRpcSubscriptions(SOLANA_WSS_URL),
+              blockExplorerUrl: "https://explorer.solana.com?cluster=devnet",
+            },
+          },
+        },
         appearance: {
           theme: "dark",
           accentColor: "#00E5D1",
