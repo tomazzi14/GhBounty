@@ -401,11 +401,13 @@ function parseGithubPrUrl(url: string): { prRepo: string; prNumber: number } {
   return { prRepo: m[1], prNumber: Number(m[2]) };
 }
 
-/** GHB-84 review shape returned from `submission_reviews`. Optional —
- * passing `null` (no row in the table) means "not decided yet". */
+/** GHB-84 + GHB-83 follow-up review shape from `submission_reviews`.
+ * Optional — passing `null` (no row in the table) means "not decided
+ * yet". `approval_feedback` was added in migration 0011. */
 type SubmissionReviewRow = {
   rejected: boolean;
   reject_reason: string | null;
+  approval_feedback: string | null;
 };
 
 function rowToSubmission(
@@ -434,6 +436,10 @@ function rowToSubmission(
     rejectReason:
       review?.rejected && review.reject_reason
         ? review.reject_reason
+        : undefined,
+    approvalFeedback:
+      status === "accepted" && review?.approval_feedback
+        ? review.approval_feedback
         : undefined,
     createdAt: new Date(row.created_at).getTime(),
   };
@@ -524,17 +530,19 @@ export async function fetchSubmissionsByDev(
   if (subIds.length > 0) {
     const { data: reviews } = await supabase
       .from("submission_reviews" as never)
-      .select("submission_id, rejected, reject_reason")
+      .select("submission_id, rejected, reject_reason, approval_feedback")
       .in("submission_id", subIds);
     const reviewRows = (reviews as unknown as Array<{
       submission_id: string;
       rejected: boolean;
       reject_reason: string | null;
+      approval_feedback: string | null;
     }>) ?? [];
     for (const r of reviewRows) {
       reviewById.set(r.submission_id, {
         rejected: r.rejected,
         reject_reason: r.reject_reason,
+        approval_feedback: r.approval_feedback,
       });
     }
   }

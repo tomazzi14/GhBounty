@@ -93,6 +93,20 @@ export type RecordWinnerParams = {
   winnerSubmissionId: string;
   /** Solana tx signature, persisted alongside the submission for audit. */
   txSignature: string;
+  /**
+   * Optional free-form feedback the company wrote in the PickWinnerModal.
+   * Persisted to `submission_reviews.approval_feedback` so the winning
+   * dev sees it on `/app/profile`. Whitespace is trimmed; empty strings
+   * are normalized to skipping the upsert (we don't want to insert a row
+   * with all-null fields just for the audit timestamps).
+   */
+  approvalFeedback?: string;
+  /**
+   * Privy DID of the company user — persisted as `decided_by` for audit
+   * symmetry with the reject path. Only used when there's actual
+   * feedback to record (otherwise we skip the upsert entirely).
+   */
+  reviewerUserId?: string;
 };
 
 /**
@@ -141,5 +155,33 @@ export async function recordWinnerOnchain(
     }
   } catch (err) {
     console.warn("[recordWinnerOnchain:bounty_meta]", err);
+  }
+
+  // 3. Persist optional approval feedback. Skipped when the company
+  //    left the textarea blank — no need to insert a near-empty row
+  //    just to record the timestamp. Best-effort like the other
+  //    branches: a failed RLS check or transient error logs and
+  //    moves on rather than masking the on-chain success.
+  const trimmed = p.approvalFeedback?.trim();
+  if (trimmed && trimmed.length > 0 && p.reviewerUserId) {
+    try {
+      const { error: revErr } = await supabase
+        .from("submission_reviews" as never)
+        .upsert(
+          {
+            submission_id: p.winnerSubmissionId,
+            rejected: false,
+            approval_feedback: trimmed,
+            decided_by: p.reviewerUserId,
+            decided_at: new Date().toISOString(),
+          } as never,
+          { onConflict: "submission_id" },
+        );
+      if (revErr) {
+        console.warn("[recordWinnerOnchain:submission_reviews]", revErr);
+      }
+    } catch (err) {
+      console.warn("[recordWinnerOnchain:submission_reviews]", err);
+    }
   }
 }

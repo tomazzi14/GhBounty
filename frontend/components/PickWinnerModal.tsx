@@ -36,6 +36,8 @@ import { createClient } from "@/utils/supabase/client";
 import type { Bounty } from "@/lib/types";
 import type { EnrichedSubmission } from "@/lib/data";
 
+const APPROVAL_FEEDBACK_MAX = 600;
+
 type Step = "confirm" | "processing" | "success" | "error";
 
 const PHASE_BUILD = 0;
@@ -52,11 +54,16 @@ const PROCESSING_STEPS = [
 export function PickWinnerModal({
   bounty,
   submission,
+  reviewerUserId,
   onClose,
   onResolved,
 }: {
   bounty: Bounty;
   submission: EnrichedSubmission;
+  /** Privy DID of the company user picking the winner. Threaded through
+   * to `recordWinnerOnchain` for `submission_reviews.decided_by` audit
+   * symmetry with the reject path. */
+  reviewerUserId: string;
   onClose: () => void;
   /** Called after on-chain confirmation + DB mirror update.
    * Receives the tx signature so the parent can render an explorer link. */
@@ -67,6 +74,10 @@ export function PickWinnerModal({
   const [txSig, setTxSig] = useState<string | null>(null);
   const [phase, setPhase] = useState<number>(PHASE_BUILD);
   const [phaseError, setPhaseError] = useState(false);
+  // Optional feedback the company can leave alongside the payout.
+  // Persisted to `submission_reviews.approval_feedback` only when
+  // non-empty after trim (see `recordWinnerOnchain`).
+  const [feedback, setFeedback] = useState("");
   const sentRef = useRef(false);
 
   const { wallets, ready: walletsReady } = useWallets();
@@ -161,6 +172,8 @@ export function PickWinnerModal({
         bountyId: bounty.id,
         winnerSubmissionId: submission.id,
         txSignature: sig,
+        approvalFeedback: feedback,
+        reviewerUserId,
       });
 
       setPhase(PROCESSING_STEPS.length);
@@ -259,6 +272,23 @@ export function PickWinnerModal({
               escrow no longer holds the funds. Other submissions will
               stay open until you reject them.
             </p>
+
+            <label className="field">
+              <span className="field-label">
+                Feedback for the dev{" "}
+                <span className="field-label-aux">
+                  (optional, {APPROVAL_FEEDBACK_MAX - feedback.length} left)
+                </span>
+              </span>
+              <textarea
+                className="reject-textarea"
+                rows={4}
+                maxLength={APPROVAL_FEEDBACK_MAX}
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                placeholder="e.g. Solid approach to the migration, ping me on Discord if you want to take more bounties on this repo…"
+              />
+            </label>
 
             {error && <div className="form-error">{error}</div>}
 

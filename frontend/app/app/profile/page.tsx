@@ -485,6 +485,14 @@ function SubmissionRow({
           </p>
         </div>
       )}
+      {submission.status === "accepted" && submission.approvalFeedback && (
+        <div className="submission-approve-feedback">
+          <span className="submission-approve-feedback-label">
+            Note from the company
+          </span>
+          <p>{submission.approvalFeedback}</p>
+        </div>
+      )}
     </div>
   );
 }

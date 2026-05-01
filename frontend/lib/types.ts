@@ -94,5 +94,13 @@ export type Submission = {
    * Empty string is normalized to undefined upstream.
    */
   rejectReason?: string;
+  /**
+   * Optional feedback the company left when picking this dev as the
+   * winner (GHB-83 follow-up). Only meaningful when
+   * `status === "accepted"`. Mirrors
+   * `submission_reviews.approval_feedback`. Empty string normalized to
+   * undefined upstream.
+   */
+  approvalFeedback?: string;
   createdAt: number;
 };

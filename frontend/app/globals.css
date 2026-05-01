@@ -1476,6 +1476,26 @@ section { position: relative; padding: 120px 40px; }
   white-space: pre-wrap;
 }
 
+/* GHB-83 follow-up: same shape as the reject feedback panel but in
+ * accent teal — used on /app/profile next to the winning submission. */
+.submission-approve-feedback {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--accent);
+  background: rgba(0, 229, 209, 0.04);
+}
+.submission-approve-feedback-label {
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 500;
+}
+.submission-approve-feedback p {
+  font-size: 13px; color: var(--text-dim);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 /* "Reject" button — slightly muted red so it doesn't compete with the
  * primary "Select winner" CTA. Shape mirrors `.btn-ghost`. */
 .btn-reject {
@@ -2683,6 +2703,26 @@ section { position: relative; padding: 120px 40px; }
 .rejected-pill:hover {
   background: rgba(255, 107, 107, 0.1);
   border-color: rgba(255, 107, 107, 0.5);
+}
+
+/* GHB-83 follow-up: green analogue of `.rejected-pill`. Shows up on
+ * the dev marketplace when THIS dev was picked as the winner. Click
+ * sends them to /app/profile where the full approval feedback (if
+ * any) is rendered in context. */
+.approved-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 8px;
+  background: rgba(0, 229, 209, 0.08);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11.5px; letter-spacing: .05em;
+  text-decoration: none;
+  font-weight: 500;
+  transition: background-color .12s, border-color .12s;
+}
+.approved-pill:hover {
+  background: rgba(0, 229, 209, 0.14);
 }
 
 .status-badge.submission-pending { color: #FEBC2E; border-color: rgba(254, 188, 46, 0.3); background: rgba(254, 188, 46, 0.06); }

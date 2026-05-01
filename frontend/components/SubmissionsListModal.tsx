@@ -169,10 +169,11 @@ export function SubmissionsListModal({
         </div>
       </div>
 
-      {pickFor && (
+      {pickFor && user && (
         <PickWinnerModal
           bounty={bounty}
           submission={pickFor}
+          reviewerUserId={user.id}
           onClose={() => setPickFor(null)}
           onResolved={() => {
             setPickFor(null);

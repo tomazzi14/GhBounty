@@ -81,6 +81,12 @@ function DevDashboardInner() {
   const [rejectedBountyIds, setRejectedBountyIds] = useState<Set<string>>(
     new Set(),
   );
+  // GHB-83 follow-up: bounties where THIS dev was picked as the winner.
+  // Mirror of `rejectedBountyIds` for the approval flow — same UX
+  // pattern, different colour. Approval feedback lives on /app/profile.
+  const [approvedBountyIds, setApprovedBountyIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   useEffect(() => {
     const h = () => setTick((t) => t + 1);
@@ -102,6 +108,13 @@ function DevDashboardInner() {
         new Set(
           subs
             .filter((s) => s.status === "rejected")
+            .map((s) => s.bountyId),
+        ),
+      );
+      setApprovedBountyIds(
+        new Set(
+          subs
+            .filter((s) => s.status === "accepted")
             .map((s) => s.bountyId),
         ),
       );
@@ -221,14 +234,24 @@ function DevDashboardInner() {
           {filtered.map((b) => {
             const submitted = submittedBountyIds.has(b.id);
             const rejected = rejectedBountyIds.has(b.id);
-            // Three-way action gate (rejected wins over submitted because
-            // it's the strictly newer state — a rejected sub is always
-            // also a submitted one):
-            //   rejected  → "Rejected — see profile" (Link to /app/profile)
-            //   submitted → "PR submitted" pill
+            const approved = approvedBountyIds.has(b.id);
+            // Four-way action gate, in priority order (later states are
+            // strictly newer — picked sub also matches submitted, etc.):
+            //   approved  → green "You won — see profile" (Link)
+            //   rejected  → red "Rejected — see profile" (Link)
+            //   submitted → "PR submitted" pill (still pending decision)
             //   neither   → "Submit PR" button
             let action: React.ReactNode;
-            if (rejected) {
+            if (approved) {
+              action = (
+                <Link href="/app/profile" className="approved-pill">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                  You won — see profile
+                </Link>
+              );
+            } else if (rejected) {
               action = (
                 <Link href="/app/profile" className="rejected-pill">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
