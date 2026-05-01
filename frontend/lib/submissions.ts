@@ -51,6 +51,13 @@ export type InsertSubmissionAndMetaResult = {
   submissionId: string;
 };
 
+/**
+ * Postgres SQLSTATE 23505 = unique_violation. PostgREST surfaces it as
+ * a string error code on the response body. We intercept that specific
+ * code to make the insert idempotent — see comment on the catch path.
+ */
+const PG_UNIQUE_VIOLATION = "23505";
+
 export async function insertSubmissionAndMeta(
   supabase: DBClient,
   p: InsertSubmissionAndMetaParams,
@@ -70,24 +77,66 @@ export async function insertSubmissionAndMeta(
     })
     .select("id")
     .single();
-  if (subErr || !submission) {
-    throw new Error(
-      `submissions insert: ${subErr?.message ?? "no row returned"}`,
-    );
+
+  // Idempotency for the submission row.
+  //
+  // The on-chain `submit_solution` instruction is the source of truth: by
+  // the time we reach this insert, we've confirmed the tx and the
+  // submission account exists at `p.pda`. Anything that retries this
+  // insert path with the same PDA (Supabase JS auto-retry on a flaky
+  // POST, React StrictMode double-effect in dev, Next Fast Refresh
+  // re-mounting the modal mid-flow, …) would otherwise surface a
+  // confusing 409 to the user even though the row IS already persisted.
+  //
+  // So: when Postgres rejects with 23505 / `submissions_pda_unique`,
+  // re-fetch the existing row keyed on the same PDA and treat the call
+  // as if it had inserted. Same for the meta row below.
+  let submissionId: string | undefined = submission?.id;
+  if (subErr) {
+    if (subErr.code === PG_UNIQUE_VIOLATION) {
+      const { data: existing } = await supabase
+        .from("submissions")
+        .select("id")
+        .eq("pda", p.pda)
+        .single();
+      if (!existing) {
+        // Constraint fired but no matching row — should be impossible,
+        // surface the original error instead of pretending success.
+        throw new Error(
+          `submissions insert: unique violation but row not found for pda=${p.pda}`,
+        );
+      }
+      submissionId = existing.id;
+    } else {
+      throw new Error(`submissions insert: ${subErr.message}`);
+    }
+  }
+  if (!submissionId) {
+    throw new Error("submissions insert: no row returned");
   }
 
   const { error: metaErr } = await supabase.from("submission_meta").insert({
-    submission_id: submission.id,
+    submission_id: submissionId,
     note: p.note ?? null,
     submitted_by_user_id: p.submittedByUserId,
   });
 
   if (metaErr) {
-    // Roll back the orphan submission row so the user can retry without
-    // hitting a unique-PDA conflict on the next attempt.
-    await supabase.from("submissions").delete().eq("id", submission.id);
+    // Same idempotency story: a duplicate meta insert (PK is
+    // `submission_id`) means a previous attempt already wrote it. Treat
+    // as success.
+    if (metaErr.code === PG_UNIQUE_VIOLATION) {
+      return { submissionId };
+    }
+    // Real failure on the meta insert. Only roll back the submission row
+    // if we just created it — if we recovered an existing one above,
+    // someone else (or a previous attempt) owns it and we must not nuke
+    // their state.
+    if (submission?.id) {
+      await supabase.from("submissions").delete().eq("id", submission.id);
+    }
     throw new Error(`submission_meta insert: ${metaErr.message}`);
   }
 
-  return { submissionId: submission.id };
+  return { submissionId };
 }
