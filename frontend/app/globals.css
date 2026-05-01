@@ -660,6 +660,56 @@ section { position: relative; padding: 120px 40px; }
   box-shadow: 0 0 8px var(--accent);
   animation: pulse 2.2s ease-in-out infinite;
 }
+/* Live SOL balance shown inside the wallet chip, after the address.
+ * Separated from the address by a thin vertical bar so the eye treats
+ * it as a distinct field rather than part of the truncated string. */
+.wallet-btn-balance {
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(0, 229, 209, 0.35);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* GHB-83+84: chip-sized Deposit / Withdraw next to the wallet pill in
+ * the header. Match the height/border-radius of `.wallet-btn.connected`
+ * so the row reads as one unit; they're noticeably smaller in width. */
+.wallet-chip {
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color .12s, border-color .12s, color .12s, transform .08s;
+}
+.wallet-chip:hover:not(:disabled) { transform: translateY(-1px); }
+.wallet-chip:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.wallet-chip-deposit {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+.wallet-chip-deposit:hover:not(:disabled) {
+  background: rgba(0, 229, 209, 0.12);
+}
+.wallet-chip-withdraw {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #002a26;
+}
+.wallet-chip-withdraw:hover:not(:disabled) {
+  background: rgba(0, 229, 209, 0.85);
+}
+.wallet-chip-withdraw:disabled {
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--border);
+}
 
 /* ---- avatar ---- */
 .avatar { display: inline-block; flex-shrink: 0; }
