@@ -7,12 +7,34 @@ import { BountyEditMenu } from "@/components/BountyEditMenu";
 import { BulkBountyFlow } from "@/components/BulkBountyFlow";
 import { CreateBountyForm } from "@/components/CreateBountyForm";
 import { ReleaseModeBadge } from "@/components/ReleaseModePicker";
+import { SubmissionsListModal } from "@/components/SubmissionsListModal";
 import { useAuth } from "@/lib/auth";
 import { fetchBountiesByCompany } from "@/lib/data";
 import type { Bounty, Company } from "@/lib/types";
 
 type Filter = "all" | "open" | "reviewing" | "approved" | "rejected" | "paid" | "closed";
 const FILTERS: Filter[] = ["all", "open", "reviewing", "approved", "paid", "closed"];
+
+/**
+ * Filter membership rules. Non-exclusive: a bounty with submissions
+ * AND state=Open shows up under both "Open" (still accepting PRs)
+ * and "Reviewing" (has stuff to review). Mirrors the dev marketplace's
+ * `matchesStatusFilter` — keep them in sync.
+ */
+function matchesFilter(b: Bounty, filter: Filter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "open":
+      return b.status === "open" || b.status === "reviewing";
+    case "reviewing":
+      return (b.submissionCount ?? 0) > 0;
+    case "approved":
+      return b.status === "approved" || b.status === "paid";
+    default:
+      return b.status === filter;
+  }
+}
 
 export default function CompanyDashboard() {
   return (
@@ -28,6 +50,7 @@ function CompanyDashboardInner() {
   const [tick, setTick] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [reviewBounty, setReviewBounty] = useState<Bounty | null>(null);
 
   const [bounties, setBounties] = useState<Bounty[]>([]);
 
@@ -57,12 +80,18 @@ function CompanyDashboardInner() {
       paid: 0,
       closed: 0,
     };
-    for (const b of bounties) base[b.status]++;
+    // Counts mirror the (overlapping) filter membership: a bounty
+    // that's still accepting submissions AND has PRs queued counts in
+    // both "open" and "reviewing".
+    for (const b of bounties) {
+      for (const f of FILTERS) {
+        if (f !== "all" && matchesFilter(b, f)) base[f]++;
+      }
+    }
     return base;
   }, [bounties]);
 
-  const filtered =
-    filter === "all" ? bounties : bounties.filter((b) => b.status === filter);
+  const filtered = bounties.filter((b) => matchesFilter(b, filter));
 
   const totalFunded = bounties.reduce((s, b) => s + b.amountUsdc, 0);
   const totalPaid = bounties
@@ -117,6 +146,7 @@ function CompanyDashboardInner() {
                   key={b.id}
                   bounty={b}
                   meta={<ReleaseModeBadge mode={b.releaseMode} />}
+                  onSubmissionsClick={(bb) => setReviewBounty(bb)}
                   action={
                     <BountyEditMenu
                       bounty={b}
@@ -168,6 +198,13 @@ function CompanyDashboardInner() {
           company={company}
           onClose={() => setBulkOpen(false)}
           onCreated={() => setTick((t) => t + 1)}
+        />
+      )}
+
+      {reviewBounty && (
+        <SubmissionsListModal
+          bounty={reviewBounty}
+          onClose={() => setReviewBounty(null)}
         />
       )}
     </div>

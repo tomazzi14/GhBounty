@@ -1196,6 +1196,170 @@ section { position: relative; padding: 120px 40px; }
 .status-badge.status-paid { color: var(--text-dim); background: rgba(255,255,255,0.02); }
 .status-badge.status-closed { color: var(--text-muted); background: rgba(255,255,255,0.02); border-color: var(--border); }
 
+/* Subtle counter showing how many PRs have been submitted to a bounty.
+   Sits next to the StatusBadge in the card header so the company can
+   see at-a-glance which bounties have queued submissions to review. */
+.submission-count-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: .08em;
+  border: 1px solid rgba(254, 188, 46, 0.25);
+  background: rgba(254, 188, 46, 0.06);
+  color: #FEBC2E;
+}
+.submission-count-pill svg { opacity: 0.8; }
+
+.submission-count-pill-button {
+  cursor: pointer;
+  font: inherit;
+  /* Override the chrome browser default button styles. */
+  margin: 0;
+  transition: background-color .12s ease, border-color .12s ease,
+              transform .08s ease;
+}
+.submission-count-pill-button:hover {
+  background: rgba(254, 188, 46, 0.12);
+  border-color: rgba(254, 188, 46, 0.45);
+  transform: translateY(-1px);
+}
+.submission-count-pill-button:focus-visible {
+  outline: 2px solid #FEBC2E;
+  outline-offset: 2px;
+}
+
+/* =========================================================
+   SUBMISSIONS REVIEW MODAL (company side)
+   ========================================================= */
+
+.submissions-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.submissions-meta-sep { opacity: 0.5; }
+
+.submissions-loading {
+  display: flex; align-items: center; gap: 10px;
+  padding: 24px 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.submissions-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.submission-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.01);
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.submission-card-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap;
+}
+
+.submission-dev {
+  display: flex; align-items: center; gap: 10px;
+}
+.submission-dev-meta { display: flex; flex-direction: column; gap: 2px; }
+.submission-dev-name {
+  font-weight: 600; font-size: 14px; color: var(--text);
+}
+.submission-dev-handle {
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+.submission-dev-handle:hover { color: var(--accent); }
+
+.submission-card-badges {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+.submission-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+  padding: 4px 9px; border-radius: 999px;
+  border: 1px solid;
+}
+.submission-badge-winner {
+  color: #FFD166; border-color: rgba(255, 209, 102, 0.35);
+  background: rgba(255, 209, 102, 0.08);
+}
+.submission-badge-reject {
+  color: #FF6B6B; border-color: rgba(255, 107, 107, 0.3);
+  background: rgba(255, 107, 107, 0.05);
+}
+
+.submission-score {
+  font-family: var(--font-mono);
+  font-size: 13px; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: rgba(0, 229, 209, 0.06);
+  color: var(--accent);
+}
+.submission-score-low {
+  border-color: rgba(255, 107, 107, 0.3);
+  background: rgba(255, 107, 107, 0.05);
+  color: #FF6B6B;
+}
+.submission-score-pending {
+  font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: rgba(255,255,255,0.02);
+  border-color: var(--border);
+}
+
+.submission-pr-link {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.submission-pr-link:hover { text-decoration: underline; }
+
+.submission-note {
+  font-size: 13px; color: var(--text-dim);
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--border-strong);
+  background: rgba(255,255,255,0.01);
+  border-radius: 4px;
+}
+
+.submission-reasoning summary {
+  font-size: 12px; color: var(--text-dim);
+  cursor: pointer;
+  letter-spacing: .05em; text-transform: uppercase;
+}
+.submission-reasoning p {
+  font-size: 13px; color: var(--text-dim);
+  margin: 6px 0 0 0;
+  white-space: pre-wrap;
+}
+
+.submission-card-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.submission-time { font-family: var(--font-mono); font-size: 11px; }
+
 .bounty-card-head-right {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
 }

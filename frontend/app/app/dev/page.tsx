@@ -11,6 +11,30 @@ import type { Bounty, Company } from "@/lib/types";
 type StatusFilter = "all" | "open" | "reviewing" | "approved";
 const STATUS_FILTERS: StatusFilter[] = ["all", "open", "reviewing", "approved"];
 
+/**
+ * Decide whether a bounty matches a given UI filter. The filters are
+ * deliberately non-exclusive — a bounty that's still accepting new PRs
+ * AND has at least one submission matches both "Open" and "Reviewing".
+ *
+ *   - "open"      → on-chain state Open && !closed_by_user. Both
+ *                    `bounty.status === "open"` and `"reviewing"`
+ *                    encode that — only their submission count differs.
+ *   - "reviewing" → has at least one submission to look at.
+ *   - "approved"  → resolved on-chain (winner picked, paid out).
+ */
+function matchesStatusFilter(b: Bounty, filter: StatusFilter): boolean {
+  switch (filter) {
+    case "open":
+      return b.status === "open" || b.status === "reviewing";
+    case "reviewing":
+      return (b.submissionCount ?? 0) > 0;
+    case "approved":
+      return b.status === "approved" || b.status === "paid";
+    default:
+      return true;
+  }
+}
+
 export default function DevDashboard() {
   return (
     <Guard role="dev">
@@ -60,9 +84,21 @@ function DevDashboardInner() {
     return m;
   }, [companies]);
 
+  // GHB-170: `bounty.status` already arrives as "reviewing" whenever
+  // any submission exists (the data fetcher backfills the count from the
+  // `submissions` table — see `countSubmissionsByIssuePda`). So the
+  // dev-side view doesn't need a client-side override anymore: their own
+  // submitted bounty shows up as "Reviewing" because there IS a
+  // submission for it, period.
+  //
+  // Filter behavior is intentionally non-exclusive: a bounty with one
+  // submission AND state=Open on-chain shows up under BOTH "Open"
+  // (still accepting new PRs) and "Reviewing" (has stuff to review).
+  // "Open" / "Reviewing" are different questions about the same
+  // bounty, not mutually exclusive lifecycle states.
   const filtered = bounties.filter((b) => {
-    if (status !== "all" && b.status !== status) return false;
     if (companyId !== "all" && b.companyId !== companyId) return false;
+    if (status !== "all" && !matchesStatusFilter(b, status)) return false;
     if (search) {
       const s = search.toLowerCase();
       const hit =
