@@ -163,7 +163,12 @@ function CompanyProfile() {
             <ReadRow label="Email" value={c.email} />
             <ReadRow label="Website" value={c.website ?? "—"} />
             <ReadRow label="Industry" value={c.industry ?? "—"} />
-            <ReadRow label="Wallet" value={c.wallet ? shortHex(c.wallet) : "not connected"} mono />
+            <ReadRow
+              label="Wallet"
+              value={c.wallet ? shortHex(c.wallet) : "not connected"}
+              mono
+              copy={c.wallet}
+            />
           </div>
         </div>
       )}
@@ -348,7 +353,12 @@ function DevProfile() {
           <div className="profile-grid">
             <ReadRow label="Email" value={d.email} />
             <ReadRow label="GitHub" value={d.github ? `@${d.github}` : "—"} />
-            <ReadRow label="Wallet" value={d.wallet ? shortHex(d.wallet) : "not connected"} mono />
+            <ReadRow
+              label="Wallet"
+              value={d.wallet ? shortHex(d.wallet) : "not connected"}
+              mono
+              copy={d.wallet}
+            />
           </div>
           {d.skills.length > 0 && (
             <div className="profile-skills">
@@ -468,11 +478,51 @@ function SubmissionRow({
   );
 }
 
-function ReadRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function ReadRow({
+  label,
+  value,
+  mono,
+  copy,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  /**
+   * When set, render a small "Copy" button next to the value that writes
+   * `copy` (the full untruncated string) to the clipboard. We pass the
+   * full address here while `value` shows the abbreviated form, so users
+   * can see "AbCd…1234" but copy the real bytes.
+   */
+  copy?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    if (!copy) return;
+    try {
+      await navigator.clipboard.writeText(copy);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard API may be blocked in iframes / insecure contexts —
+       * fall through silently rather than showing a confusing toast. */
+    }
+  };
   return (
     <div className="read-row">
       <span className="field-label">{label}</span>
-      <span className={`read-value ${mono ? "mono" : ""}`}>{value}</span>
+      <span className={`read-value ${mono ? "mono" : ""} ${copy ? "has-copy" : ""}`}>
+        <span className="read-value-text">{value}</span>
+        {copy && (
+          <button
+            type="button"
+            className="summary-copy"
+            onClick={onCopy}
+            aria-label={`Copy ${label.toLowerCase()}`}
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        )}
+      </span>
     </div>
   );
 }

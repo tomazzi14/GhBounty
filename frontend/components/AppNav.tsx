@@ -3,6 +3,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { useAuth, usePrivyBackend } from "@/lib/auth-context";
 import { useWallets } from "@privy-io/react-auth/solana";
 import { mockWallet, setWallet } from "@/lib/store";
@@ -47,16 +48,21 @@ export function AppNav() {
     refresh();
   }
 
-  function handleDisconnect() {
-    if (privyMode) {
-      // Disconnecting in Privy mode means logging out — the embedded wallet
-      // is tied to the session.
-      void logout();
-      router.replace("/app/auth");
-      return;
+  // Copying the address from the header — used to be a disconnect button
+  // (`handleDisconnect`) which conflicted with the dedicated "Log out"
+  // button on the right. Now the pill is a clipboard chip: clicking it
+  // copies the full address. Logging out goes through the Log out button.
+  const [copied, setCopied] = useState(false);
+  async function handleCopy() {
+    if (!walletAddress) return;
+    try {
+      await navigator.clipboard.writeText(walletAddress);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard may be blocked in iframes / insecure contexts — silent
+       * fail is fine here, the address is also visible on /app/profile. */
     }
-    setWallet(user!.id, undefined);
-    refresh();
   }
 
   return (
@@ -83,12 +89,13 @@ export function AppNav() {
         <div className="appnav-right">
           {walletAddress ? (
             <button
+              type="button"
               className="wallet-btn connected"
-              onClick={handleDisconnect}
-              title={privyMode ? "Click to log out" : "Click to disconnect"}
+              onClick={handleCopy}
+              title="Click to copy address"
             >
               <span className="wallet-btn-dot" />
-              <code>{shortWallet(walletAddress)}</code>
+              <code>{copied ? "Copied!" : shortWallet(walletAddress)}</code>
             </button>
           ) : (
             <button className="wallet-btn" onClick={handleConnect}>

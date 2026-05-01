@@ -2417,6 +2417,14 @@ section { position: relative; padding: 120px 40px; }
   color: var(--accent);
   letter-spacing: 0.02em;
 }
+/* When a copy button sits inside a read-value, lay them out side-by-side
+ * so the truncated address + the chip stay on one row. The chip uses the
+ * shared `.summary-copy` style. */
+.read-value.has-copy {
+  display: inline-flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+}
+.read-value-text { display: inline-block; }
 
 .profile-skills {
   display: flex; flex-wrap: wrap; gap: 6px;
