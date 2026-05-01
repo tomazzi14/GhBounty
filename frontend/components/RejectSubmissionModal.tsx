@@ -6,6 +6,7 @@ import { Avatar } from "./Avatar";
 import { createClient } from "@/utils/supabase/client";
 import { rejectSubmission } from "@/lib/review-actions";
 import type { EnrichedSubmission } from "@/lib/data";
+import type { Bounty } from "@/lib/types";
 
 /**
  * GHB-84 — company-side modal for rejecting a submission with optional
@@ -22,11 +23,16 @@ import type { EnrichedSubmission } from "@/lib/data";
 const REJECT_REASON_MAX = 600;
 
 export function RejectSubmissionModal({
+  bounty,
   submission,
   reviewerUserId,
   onClose,
   onRejected,
 }: {
+  /** Parent bounty — used to enrich the GHB-92 notification payload so
+   * the dev's bell can render "Acme rejected your PR for 'Fix migration'"
+   * without an extra fetch. */
+  bounty: Bounty;
   submission: EnrichedSubmission;
   /** Privy DID of the logged-in company user — passed to the DB layer
    * for audit (`submission_reviews.decided_by`). */
@@ -71,6 +77,14 @@ export function RejectSubmissionModal({
         submissionId: submission.id,
         reason,
         reviewerUserId,
+        // GHB-92: ring the dev's bell. Empty dev id (mock paths) gracefully
+        // skips the notification write inside the helper.
+        recipientUserId: submission.dev.id || undefined,
+        notificationPayload: {
+          bountyTitle:
+            bounty.title ?? `${bounty.repo} #${bounty.issueNumber}`,
+          bountyAmount: bounty.amountUsdc,
+        },
       });
       onRejected();
     } catch (err) {
@@ -78,7 +92,18 @@ export function RejectSubmissionModal({
       setError(err instanceof Error ? err.message : "Could not save the rejection.");
       setBusy(false);
     }
-  }, [busy, reason, reviewerUserId, submission.id, onRejected]);
+  }, [
+    busy,
+    reason,
+    reviewerUserId,
+    submission.id,
+    submission.dev.id,
+    bounty.title,
+    bounty.repo,
+    bounty.issueNumber,
+    bounty.amountUsdc,
+    onRejected,
+  ]);
 
   const displayName =
     submission.dev.username || submission.dev.email || "Anonymous dev";

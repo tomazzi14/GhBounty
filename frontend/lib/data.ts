@@ -221,15 +221,27 @@ function parseGithubIssueUrl(url: string): { repo: string; issueNumber: number }
   return { repo: m[1], issueNumber: Number(m[2]) };
 }
 
-/** Map onchain state + UI flag to the broader frontend status bucket. */
+/**
+ * Map onchain state + UI flag to the broader frontend status bucket.
+ *
+ * `hasApprovedSubmission` is the off-chain shortcut: any
+ * `submission_reviews.approved=true` for this bounty means the company
+ * picked a winner, the on-chain `resolve_bounty` ix succeeded, and the
+ * escrow has paid out. The relayer eventually flips
+ * `issues.state = 'resolved'` to reflect the same fact, but on devnet
+ * (no relayer) that flip never happens — so we treat the approved flag
+ * as the immediate "this bounty is paid" signal. Same trick we use on
+ * the submission side to flip a card to Winner without relayer lag.
+ */
 function deriveStatus(
   state: IssueRow["state"],
   closedByUser: boolean,
   submissionCount: number,
+  hasApprovedSubmission: boolean,
 ): BountyStatus {
   if (closedByUser) return "closed";
   if (state === "cancelled") return "closed";
-  if (state === "resolved") return "paid";
+  if (state === "resolved" || hasApprovedSubmission) return "paid";
   if (submissionCount > 0) return "reviewing";
   return "open";
 }
@@ -241,7 +253,11 @@ function deriveStatus(
  */
 const SOL_DECIMALS = 9;
 
-function rowToBounty(row: IssueRow, submissionCount?: number): Bounty {
+function rowToBounty(
+  row: IssueRow,
+  submissionCount?: number,
+  hasApprovedSubmission = false,
+): Bounty {
   const { repo, issueNumber } = parseGithubIssueUrl(row.github_issue_url);
   const meta = row.bounty_meta;
   const amountRaw =
@@ -265,6 +281,7 @@ function rowToBounty(row: IssueRow, submissionCount?: number): Bounty {
       row.state,
       meta?.closed_by_user ?? false,
       effectiveCount,
+      hasApprovedSubmission,
     ),
     releaseMode: meta?.release_mode ?? "auto",
     submissionCount: effectiveCount,
@@ -305,6 +322,117 @@ async function countSubmissionsByIssuePda(
   return counts;
 }
 
+/**
+ * Map `bountyPda → winningSubmissionId` for every bounty in the input
+ * that has an approved submission. Returns an empty map when none.
+ *
+ * Used by `fetchSubmissionsByDev` to derive the "lost" status: if a
+ * dev's submission's bounty has a winner that isn't them, their PR is
+ * effectively closed — escrow paid out, can't win anymore.
+ *
+ * Reuses the same two-step query as `fetchPdasWithApprovedSubmission`
+ * but keeps the winning submission_id around (instead of collapsing to
+ * a Set of PDAs).
+ */
+async function findApprovedSubmissionByPda(
+  supabase: ReturnType<typeof createClient>,
+  pdas: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (pdas.length === 0) return out;
+
+  const { data: subs, error: subErr } = await supabase
+    .from("submissions")
+    .select("id, issue_pda")
+    .in("issue_pda", pdas);
+  if (subErr) {
+    console.error("[findApprovedSubmissionByPda:subs]", subErr);
+    return out;
+  }
+  const subRows = subs ?? [];
+  if (subRows.length === 0) return out;
+
+  const subIds = subRows.map((r) => r.id);
+  const { data: reviews, error: revErr } = await supabase
+    .from("submission_reviews" as never)
+    .select("submission_id, approved")
+    .in("submission_id", subIds)
+    .eq("approved", true);
+  if (revErr) {
+    console.error("[findApprovedSubmissionByPda:reviews]", revErr);
+    return out;
+  }
+  const approvedIds = new Set(
+    ((reviews as unknown as Array<{ submission_id: string }>) ?? []).map(
+      (r) => r.submission_id,
+    ),
+  );
+
+  // First approved submission per PDA wins the slot; in practice there
+  // should only ever be one (the program enforces a single
+  // `resolve_bounty` call per bounty), so the precedence doesn't matter.
+  for (const row of subRows) {
+    if (!approvedIds.has(row.id)) continue;
+    if (!out.has(row.issue_pda)) out.set(row.issue_pda, row.id);
+  }
+  return out;
+}
+
+/**
+ * Set of bounty PDAs that have AT LEAST ONE submission with an off-chain
+ * `submission_reviews.approved = true`. Used by `deriveStatus` to mark a
+ * bounty as paid the moment the company picks a winner, without waiting
+ * for the relayer to flip `issues.state = 'resolved'`.
+ *
+ * Two-step: fetch approved submission ids for the bounty's PDAs (via the
+ * `submissions.issue_pda` plain-text column — no FK), then look up which
+ * issue_pdas they belong to.
+ */
+async function fetchPdasWithApprovedSubmission(
+  supabase: ReturnType<typeof createClient>,
+  pdas: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (pdas.length === 0) return out;
+
+  // 1. Submissions for the requested bounties — id + issue_pda.
+  const { data: subs, error: subErr } = await supabase
+    .from("submissions")
+    .select("id, issue_pda")
+    .in("issue_pda", pdas);
+  if (subErr) {
+    console.error("[fetchPdasWithApprovedSubmission:subs]", subErr);
+    return out;
+  }
+  const subRows = subs ?? [];
+  if (subRows.length === 0) return out;
+
+  // 2. Of those, which have approved=true in submission_reviews.
+  // `submission_reviews` isn't in db.types.ts — `as never` cast keeps
+  // the typed builder quiet.
+  const subIds = subRows.map((r) => r.id);
+  const { data: reviews, error: revErr } = await supabase
+    .from("submission_reviews" as never)
+    .select("submission_id, approved")
+    .in("submission_id", subIds)
+    .eq("approved", true);
+  if (revErr) {
+    console.error("[fetchPdasWithApprovedSubmission:reviews]", revErr);
+    return out;
+  }
+  const approvedIds = new Set(
+    ((reviews as unknown as Array<{ submission_id: string }>) ?? []).map(
+      (r) => r.submission_id,
+    ),
+  );
+
+  // 3. Map approved sub ids back to their bounty PDAs.
+  for (const row of subRows) {
+    if (approvedIds.has(row.id)) out.add(row.issue_pda);
+  }
+  return out;
+}
+
 export async function fetchBounties(): Promise<Bounty[]> {
   if (!useRealBackend) {
     return mockLoadBounties();
@@ -320,11 +448,14 @@ export async function fetchBounties(): Promise<Bounty[]> {
     return [];
   }
   const rows = data ?? [];
-  const counts = await countSubmissionsByIssuePda(
-    supabase,
-    rows.map((r) => r.pda),
+  const pdas = rows.map((r) => r.pda);
+  const [counts, approvedSet] = await Promise.all([
+    countSubmissionsByIssuePda(supabase, pdas),
+    fetchPdasWithApprovedSubmission(supabase, pdas),
+  ]);
+  return rows.map((row) =>
+    rowToBounty(row, counts.get(row.pda) ?? 0, approvedSet.has(row.pda)),
   );
-  return rows.map((row) => rowToBounty(row, counts.get(row.pda) ?? 0));
 }
 
 export async function fetchBounty(id: string): Promise<Bounty | null> {
@@ -341,7 +472,11 @@ export async function fetchBounty(id: string): Promise<Bounty | null> {
     console.error("[fetchBounty]", error);
     return null;
   }
-  return data ? rowToBounty(data) : null;
+  if (!data) return null;
+  // Single-row read still needs the approved-flag lookup so the bounty
+  // detail page reflects the paid status the moment a winner is picked.
+  const approvedSet = await fetchPdasWithApprovedSubmission(supabase, [data.pda]);
+  return rowToBounty(data, undefined, approvedSet.has(data.pda));
 }
 
 export async function fetchBountiesByCompany(
@@ -367,11 +502,14 @@ export async function fetchBountiesByCompany(
   const ownRows = (data ?? []).filter(
     (row) => row.bounty_meta?.created_by_user_id === companyId,
   );
-  const counts = await countSubmissionsByIssuePda(
-    supabase,
-    ownRows.map((r) => r.pda),
+  const pdas = ownRows.map((r) => r.pda);
+  const [counts, approvedSet] = await Promise.all([
+    countSubmissionsByIssuePda(supabase, pdas),
+    fetchPdasWithApprovedSubmission(supabase, pdas),
+  ]);
+  return ownRows.map((row) =>
+    rowToBounty(row, counts.get(row.pda) ?? 0, approvedSet.has(row.pda)),
   );
-  return ownRows.map((row) => rowToBounty(row, counts.get(row.pda) ?? 0));
 }
 
 /* ---------------------------------------------------------------- */
@@ -422,20 +560,33 @@ function rowToSubmission(
   row: SubmissionRow,
   bountyId: string,
   review?: SubmissionReviewRow | null,
+  /**
+   * When the dev's bounty has an approved winner that ISN'T this row,
+   * pass `true` to mark the submission as "lost" — escrow paid out, no
+   * longer eligible to win. Defaults to `false` so callers that don't
+   * fetch the winner map (e.g. mock paths, single-bounty company-side
+   * lookups) keep their existing behaviour.
+   */
+  bountyAwardedToOther = false,
 ): Submission {
   const { prRepo, prNumber } = parseGithubPrUrl(row.pr_url);
-  // Status precedence: Accepted > Rejected > Pending.
+  // Status precedence: Accepted > Rejected > Lost > Pending.
   //
   // "Accepted" comes from EITHER the on-chain mirror (relayer caught up
   // to `submissions.state = 'winner'`) OR the off-chain
   // `submission_reviews.approved` flag — set immediately when the
   // company picks the winner, so the UI reflects it without relayer
   // lag (devnet runs without a relayer hit this).
+  //
+  // "Lost" only fires when the bounty has an approved winner that isn't
+  // this submission. Without the winner-map lookup the flag is false
+  // and we fall through to the legacy three-way derivation.
   const onchainWinner = row.state === "winner";
   const offchainApproved = review?.approved === true;
   let status: SubmissionStatus = "pending";
   if (onchainWinner || offchainApproved) status = "accepted";
   else if (review?.rejected) status = "rejected";
+  else if (bountyAwardedToOther) status = "lost";
 
   return {
     id: row.id,
@@ -533,7 +684,13 @@ export async function fetchSubmissionsByDev(
   }
   const rows = data ?? [];
   const pdas = Array.from(new Set(rows.map((r) => r.issue_pda)));
-  const idByPda = await resolveIssueIdsByPda(supabase, pdas);
+  const [idByPda, winnerByPda] = await Promise.all([
+    resolveIssueIdsByPda(supabase, pdas),
+    // GHB-92 follow-up: per-bounty "who won?" so we can flip the dev's
+    // own submission to "lost" when the bounty has been awarded to
+    // somebody else. Cheap (one extra query, scoped to the dev's PDAs).
+    findApprovedSubmissionByPda(supabase, pdas),
+  ]);
   // GHB-84: hydrate the company's review decision so the dev sees the
   // "Rejected" status + feedback on their own submissions list. The
   // submission_reviews table isn't in the generated db.types.ts —
@@ -566,13 +723,17 @@ export async function fetchSubmissionsByDev(
       });
     }
   }
-  return rows.map((row) =>
-    rowToSubmission(
+  return rows.map((row) => {
+    const winnerSubId = winnerByPda.get(row.issue_pda);
+    const bountyAwardedToOther =
+      winnerSubId != null && winnerSubId !== row.id;
+    return rowToSubmission(
       row,
       idByPda.get(row.issue_pda) ?? "",
       reviewById.get(row.id) ?? null,
-    ),
-  );
+      bountyAwardedToOther,
+    );
+  });
 }
 
 /* ---------------------------------------------------------------- */

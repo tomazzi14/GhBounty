@@ -430,6 +430,7 @@ function SubmissionRow({
     pending: "Pending",
     accepted: "Accepted",
     rejected: "Rejected",
+    lost: "Not selected",
   };
   return (
     <div className="bounty-card">
@@ -494,6 +495,17 @@ function SubmissionRow({
             {submission.approvalFeedback
               ? submission.approvalFeedback
               : "No specific note from the company. The bounty payout has been released to your wallet."}
+          </p>
+        </div>
+      )}
+      {submission.status === "lost" && (
+        <div className="submission-lost-feedback">
+          <span className="submission-lost-feedback-label">
+            Another submission won this bounty
+          </span>
+          <p>
+            The escrow has been released to a different developer. Your PR
+            wasn&apos;t selected this time — thanks for participating.
           </p>
         </div>
       )}

@@ -92,6 +92,11 @@ function DevDashboardInner() {
   const [approvedBountyIds, setApprovedBountyIds] = useState<Set<string>>(
     new Set(),
   );
+  // GHB-92 follow-up: bounties where the dev submitted but a *different*
+  // PR won. The submission status is "lost" — we show a muted "Not
+  // selected" pill in place of "PR submitted" so the dev knows the
+  // bounty is closed for them.
+  const [lostBountyIds, setLostBountyIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const h = () => setTick((t) => t + 1);
@@ -120,6 +125,13 @@ function DevDashboardInner() {
         new Set(
           subs
             .filter((s) => s.status === "accepted")
+            .map((s) => s.bountyId),
+        ),
+      );
+      setLostBountyIds(
+        new Set(
+          subs
+            .filter((s) => s.status === "lost")
             .map((s) => s.bountyId),
         ),
       );
@@ -245,10 +257,11 @@ function DevDashboardInner() {
             const submitted = submittedBountyIds.has(b.id);
             const rejected = rejectedBountyIds.has(b.id);
             const approved = approvedBountyIds.has(b.id);
-            // Four-way action gate, in priority order (later states are
-            // strictly newer — picked sub also matches submitted, etc.):
-            //   approved  → green "You won — see profile" (Link)
-            //   rejected  → red "Rejected — see profile" (Link)
+            const lost = lostBountyIds.has(b.id);
+            // Five-way action gate, in priority order:
+            //   approved  → green "You won — see profile"   (Link)
+            //   rejected  → red "Rejected — see profile"    (Link)
+            //   lost      → muted "Not selected — see profile" (Link)
             //   submitted → "PR submitted" pill (still pending decision)
             //   neither   → "Submit PR" button
             let action: React.ReactNode;
@@ -268,6 +281,16 @@ function DevDashboardInner() {
                     <path d="M6 6l12 12M18 6L6 18" />
                   </svg>
                   Rejected — see profile
+                </Link>
+              );
+            } else if (lost) {
+              action = (
+                <Link href="/app/profile" className="lost-pill">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M9 12h6" />
+                  </svg>
+                  Not selected — see profile
                 </Link>
               );
             } else if (submitted) {

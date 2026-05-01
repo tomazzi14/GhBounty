@@ -12,6 +12,8 @@ import { getConnection } from "@/lib/solana";
 import { Avatar } from "./Avatar";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
+import { NotificationsBell } from "./NotificationsBell";
+import { useSupabaseBackend } from "@/lib/auth-context";
 
 function shortWallet(w: string) {
   if (w.length < 12) return w;
@@ -173,6 +175,12 @@ export function AppNav() {
               </svg>
               Connect wallet
             </button>
+          )}
+          {/* GHB-92: bell only renders on real backends (Privy/Supabase).
+              The localStorage mock has no `notifications` table so we'd
+              just be making 404'ing fetches. */}
+          {(privyMode || useSupabaseBackend) && (
+            <NotificationsBell userId={user.id} />
           )}
           <Link
             href="/app/profile"

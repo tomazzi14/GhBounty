@@ -174,6 +174,15 @@ export function PickWinnerModal({
         txSignature: sig,
         approvalFeedback: feedback,
         reviewerUserId,
+        // GHB-92: tell the dev about the win in their bell. The dev id
+        // comes off the submission's enriched profile. Payload pre-fills
+        // the bounty meta so the dropdown renders without a join.
+        recipientUserId: submission.dev.id || undefined,
+        notificationPayload: {
+          bountyTitle:
+            bounty.title ?? `${bounty.repo} #${bounty.issueNumber}`,
+          bountyAmount: bounty.amountUsdc,
+        },
       });
 
       setPhase(PROCESSING_STEPS.length);

@@ -24,6 +24,13 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./db.types";
+import {
+  emitBountyResolvedOtherBulk,
+  emitSubmissionApproved,
+  emitSubmissionRejected,
+  truncateFeedback,
+  type NotificationPayload,
+} from "./notifications";
 
 type DBClient = SupabaseClient<Database>;
 
@@ -43,6 +50,18 @@ export type RejectSubmissionParams = {
    * policy verifies the same identity owns the parent bounty.
    */
   reviewerUserId: string;
+  /**
+   * GHB-92: Privy DID of the recipient (the dev who submitted the PR).
+   * When present, we emit a `submission_rejected` notification after the
+   * review row is written. Optional only because legacy callers might
+   * not have looked up the dev id yet — every real call site has it.
+   */
+  recipientUserId?: string;
+  /**
+   * Optional payload bits that get persisted on the notification row so
+   * the dropdown can render a useful preview without an extra fetch.
+   */
+  notificationPayload?: NotificationPayload;
 };
 
 /**
@@ -84,6 +103,19 @@ export async function rejectSubmission(
       `Could not save the rejection (${error.code ?? "?"}): ${error.message}`,
     );
   }
+
+  // GHB-92: surface the rejection in the dev's bell. Best-effort — the
+  // DB write already succeeded, a missing notification is recoverable.
+  if (p.recipientUserId) {
+    await emitSubmissionRejected(supabase, {
+      recipientUserId: p.recipientUserId,
+      submissionId: p.submissionId,
+      payload: {
+        ...p.notificationPayload,
+        feedbackExcerpt: truncateFeedback(reason ?? undefined),
+      },
+    });
+  }
 }
 
 export type RecordWinnerParams = {
@@ -107,6 +139,16 @@ export type RecordWinnerParams = {
    * feedback to record (otherwise we skip the upsert entirely).
    */
   reviewerUserId?: string;
+  /**
+   * GHB-92: Privy DID of the winning dev. When present, we emit a
+   * `submission_approved` notification after the on-chain tx confirmed
+   * and the off-chain mirror was written.
+   */
+  recipientUserId?: string;
+  /**
+   * Optional payload (bounty title, amount) for the notification preview.
+   */
+  notificationPayload?: NotificationPayload;
 };
 
 /**
@@ -179,5 +221,67 @@ export async function recordWinnerOnchain(
     } catch (err) {
       console.warn("[recordWinnerOnchain:submission_reviews]", err);
     }
+  }
+
+  // GHB-92: ring the dev's bell. Same best-effort treatment as the
+  // mirror updates above — if this throws, the payout still happened.
+  if (p.recipientUserId) {
+    const trimmed = p.approvalFeedback?.trim() ?? "";
+    await emitSubmissionApproved(supabase, {
+      recipientUserId: p.recipientUserId,
+      submissionId: p.winnerSubmissionId,
+      payload: {
+        ...p.notificationPayload,
+        feedbackExcerpt:
+          trimmed.length > 0 ? truncateFeedback(trimmed) : undefined,
+      },
+    });
+  }
+
+  // GHB-92 follow-up: fan out a "bounty_resolved_other" to every losing
+  // submitter. We resolve the bounty's PDA → all submissions for that
+  // bounty → drop the winner + dedupe by dev id. Single bulk insert.
+  //
+  // Same best-effort policy as everything else here: a failed write
+  // doesn't undo the payout.
+  try {
+    const { data: issueRow } = await supabase
+      .from("issues")
+      .select("pda")
+      .eq("id", p.bountyId)
+      .single();
+    const bountyPda = issueRow?.pda;
+    if (bountyPda) {
+      const { data: subs } = await supabase
+        .from("submissions")
+        .select("id, submission_meta(submitted_by_user_id)")
+        .eq("issue_pda", bountyPda);
+      type SubRow = {
+        id: string;
+        submission_meta: { submitted_by_user_id: string | null } | null;
+      };
+      const rows = (subs as unknown as SubRow[] | null) ?? [];
+      // Build the recipient list: skip the winner, skip subs with no
+      // associated dev id (shouldn't happen but defensive), dedupe by
+      // dev id so a dev who submitted multiple PRs gets one ring.
+      const seen = new Set<string>();
+      const recipients = [];
+      for (const r of rows) {
+        if (r.id === p.winnerSubmissionId) continue;
+        const devId = r.submission_meta?.submitted_by_user_id;
+        if (!devId || seen.has(devId)) continue;
+        seen.add(devId);
+        recipients.push({ recipientUserId: devId, submissionId: r.id });
+      }
+      if (recipients.length > 0) {
+        await emitBountyResolvedOtherBulk(
+          supabase,
+          recipients,
+          p.notificationPayload ?? {},
+        );
+      }
+    }
+  } catch (err) {
+    console.warn("[recordWinnerOnchain:notifyLosers]", err);
   }
 }

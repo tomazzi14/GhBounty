@@ -711,6 +711,155 @@ section { position: relative; padding: 120px 40px; }
   border-color: var(--border);
 }
 
+/* ---- GHB-92: notifications bell + dropdown ---- */
+.notif-wrap { position: relative; display: inline-flex; }
+.notif-btn {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease,
+    transform 120ms ease;
+}
+.notif-btn:hover {
+  background: rgba(0, 229, 209, 0.08);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.notif-btn.open {
+  background: rgba(0, 229, 209, 0.12);
+  border-color: var(--accent);
+}
+.notif-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ff5757;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 360px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+  overflow: hidden;
+}
+.notif-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.notif-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.notif-mark-all {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.notif-mark-all:hover { text-decoration: underline; }
+.notif-state {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.notif-list li { border-bottom: 1px solid var(--border); }
+.notif-list li:last-child { border-bottom: none; }
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.notif-item:hover { background: rgba(255, 255, 255, 0.03); }
+.notif-item.unread { background: rgba(0, 229, 209, 0.04); }
+.notif-item.unread:hover { background: rgba(0, 229, 209, 0.08); }
+.notif-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 999px;
+}
+.notif-dot-approved { background: #4ade80; }
+.notif-dot-rejected { background: #ff5757; }
+.notif-dot-auto-rejected { background: #999; }
+.notif-dot-scored { background: var(--accent); }
+.notif-dot-info { background: #5fb6ff; }
+.notif-dot-resolved-other { background: #b89cff; }
+.notif-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.notif-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+}
+.notif-excerpt {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.notif-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
 /* ---- avatar ---- */
 .avatar { display: inline-block; flex-shrink: 0; }
 .avatar-img { object-fit: cover; border: 1px solid var(--border); }
@@ -1513,6 +1662,26 @@ section { position: relative; padding: 120px 40px; }
   font-size: 13px; color: var(--text-dim);
   margin: 0;
   white-space: pre-wrap;
+}
+
+/* GHB-92 follow-up: neutral panel for "another submission won" — same
+ * shape as the others but in a muted gray so it reads as "closed,
+ * non-event" rather than success or failure. */
+.submission-lost-feedback {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px dashed var(--border-strong);
+  background: rgba(255, 255, 255, 0.02);
+}
+.submission-lost-feedback-label {
+  font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.submission-lost-feedback p {
+  font-size: 13px; color: var(--text-dim);
+  margin: 0;
 }
 
 /* "Reject" button — slightly muted red so it doesn't compete with the
@@ -2744,9 +2913,29 @@ section { position: relative; padding: 120px 40px; }
   background: rgba(0, 229, 209, 0.14);
 }
 
+/* GHB-92 follow-up: muted pill for "another submission won this bounty".
+ * Same shape as `.rejected-pill` but neutral gray — the dev didn't fail,
+ * they just didn't win this one. Click goes to /app/profile. */
+.lost-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11.5px; letter-spacing: .05em;
+  text-decoration: none;
+  transition: background-color .12s, border-color .12s;
+}
+.lost-pill:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-strong);
+}
+
 .status-badge.submission-pending { color: #FEBC2E; border-color: rgba(254, 188, 46, 0.3); background: rgba(254, 188, 46, 0.06); }
 .status-badge.submission-accepted { color: var(--accent); border-color: var(--border-strong); background: rgba(0, 229, 209, 0.06); }
 .status-badge.submission-rejected { color: #FF6B6B; border-color: rgba(255, 107, 107, 0.3); background: rgba(255, 107, 107, 0.05); }
+.status-badge.submission-lost { color: var(--text-dim); border-color: var(--border); background: rgba(255, 255, 255, 0.02); }
 
 .submission-note {
   font-size: 12.5px; color: var(--text-dim);

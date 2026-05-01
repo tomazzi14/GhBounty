@@ -76,7 +76,19 @@ export type Bounty = {
   createdAt: number;
 };
 
-export type SubmissionStatus = "pending" | "accepted" | "rejected";
+/**
+ * Coarse status the dev sees on their own submission.
+ *
+ *   pending  — relayer / company haven't acted on it yet
+ *   accepted — this submission won the bounty
+ *   rejected — explicitly rejected (manual or auto)
+ *   lost     — a *different* submission on the same bounty was approved.
+ *              The dev's own PR is neither the winner nor explicitly
+ *              rejected; it just can't win anymore because escrow has
+ *              paid out. We surface this as "Not selected" rather than
+ *              leaving it stuck on "Pending".
+ */
+export type SubmissionStatus = "pending" | "accepted" | "rejected" | "lost";
 
 export type Submission = {
   id: string;

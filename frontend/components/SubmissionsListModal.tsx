@@ -237,6 +237,7 @@ export function SubmissionsListModal({
 
       {rejectFor && user && (
         <RejectSubmissionModal
+          bounty={bounty}
           submission={rejectFor}
           reviewerUserId={user.id}
           onClose={() => setRejectFor(null)}
