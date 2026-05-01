@@ -517,6 +517,16 @@ export type EnrichedSubmission = {
   prUrl: string;
   prRepo: string;
   prNumber: number;
+  /**
+   * On-chain solver pubkey (base58). Mirrored verbatim from
+   * `submissions.solver`, which the program writes during `submit_solution`.
+   * Used as the `winner` account when calling `resolve_bounty` — the
+   * program enforces `winner.key() == submission.solver` so we MUST pass
+   * this exact value, not the dev's profile wallet (the dev may have
+   * multiple wallets; only the one that signed `submit_solution` is the
+   * legal recipient).
+   */
+  solver: string;
   state: "pending" | "scored" | "winner";
   rank: number | null;
   createdAt: number;
@@ -532,6 +542,21 @@ export type EnrichedSubmission = {
   evaluation: SubmissionScore | null;
   /** `score < bounty.rejectThreshold` — only meaningful when scored. */
   recommendedReject: boolean;
+  /**
+   * Company-side review decision (GHB-84). Mirrors the
+   * `submission_reviews` row when present; `null` otherwise — meaning the
+   * company hasn't acted on this submission yet.
+   *
+   * `rejected: true` is a soft, off-chain decision: the dev's submission
+   * is hidden from the active review queue, but the on-chain Submission
+   * account stays in `Pending` / `Scored`. Picking the winner pays out
+   * via `resolve_bounty` regardless of the rejected losers.
+   */
+  review: {
+    rejected: boolean;
+    rejectReason: string | null;
+    decidedAt: number | null;
+  } | null;
 };
 
 /**
@@ -570,13 +595,14 @@ export async function fetchSubmissionsForBountyDetailed(
 
   // 2. Submissions with the meta row embedded (FK exists on
   //    `submission_meta.submission_id`). Newest first.
-  // `db.types.ts` is stale — it doesn't know about the `rank` column,
-  // so we cast through `unknown` to keep TS quiet without regenerating
-  // types here. Same trick for the `evaluations` table below.
+  // `db.types.ts` is stale — it doesn't know about the `rank` column or the
+  // GHB-83 `submission_reviews` table, so we cast through `unknown` to
+  // keep TS quiet without regenerating types here. Same trick for
+  // `evaluations` below.
   const { data: subs, error: subErr } = await supabase
     .from("submissions")
     .select(
-      "id, pda, pr_url, state, rank, created_at, submission_meta(note, submitted_by_user_id)" as string,
+      "id, pda, solver, pr_url, state, rank, created_at, submission_meta(note, submitted_by_user_id)" as string,
     )
     .eq("issue_pda", issue.pda)
     .order("created_at", { ascending: false });
@@ -587,6 +613,7 @@ export async function fetchSubmissionsForBountyDetailed(
   const subRows = (subs as unknown as Array<{
     id: string;
     pda: string;
+    solver: string;
     pr_url: string;
     state: "pending" | "scored" | "winner";
     rank: number | null;
@@ -641,14 +668,22 @@ export async function fetchSubmissionsForBountyDetailed(
   //
   // `evaluations` isn't in the generated `db.types.ts` yet — bypass the
   // typed builder via an `as never` cast on the table name. Same
-  // safety as a typed query at runtime.
+  // safety as a typed query at runtime. We do the same below for
+  // `submission_reviews` (added in migration 0010).
   const subPdas = subRows.map((r) => r.pda);
-  const { data: evals } = await supabase
-    .from("evaluations" as never)
-    .select("submission_pda, source, score, reasoning, created_at")
-    .in("submission_pda", subPdas)
-    .order("created_at", { ascending: false });
-  const evalRows = (evals as unknown as Array<{
+  const subIds = subRows.map((r) => r.id);
+  const [evalQ, reviewQ] = await Promise.all([
+    supabase
+      .from("evaluations" as never)
+      .select("submission_pda, source, score, reasoning, created_at")
+      .in("submission_pda", subPdas)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("submission_reviews" as never)
+      .select("submission_id, rejected, reject_reason, decided_at")
+      .in("submission_id", subIds),
+  ]);
+  const evalRows = (evalQ.data as unknown as Array<{
     submission_pda: string;
     source: string | null;
     score: number | null;
@@ -665,6 +700,23 @@ export async function fetchSubmissionsForBountyDetailed(
     });
   }
 
+  // GHB-83+84: review decisions, keyed by submission_id (PK in the
+  // review table). Missing row → no decision yet.
+  const reviewRows = (reviewQ.data as unknown as Array<{
+    submission_id: string;
+    rejected: boolean;
+    reject_reason: string | null;
+    decided_at: string;
+  }>) ?? [];
+  const reviewById = new Map<string, EnrichedSubmission["review"]>();
+  for (const r of reviewRows) {
+    reviewById.set(r.submission_id, {
+      rejected: r.rejected,
+      rejectReason: r.reject_reason,
+      decidedAt: r.decided_at ? new Date(r.decided_at).getTime() : null,
+    });
+  }
+
   return subRows.map((row) => {
     const { prRepo, prNumber } = parseGithubPrUrl(row.pr_url);
     const devId = row.submission_meta?.submitted_by_user_id ?? "";
@@ -678,6 +730,7 @@ export async function fetchSubmissionsForBountyDetailed(
     return {
       id: row.id,
       pda: row.pda,
+      solver: row.solver,
       prUrl: row.pr_url,
       prRepo,
       prNumber,
@@ -694,6 +747,7 @@ export async function fetchSubmissionsForBountyDetailed(
       },
       evaluation,
       recommendedReject,
+      review: reviewById.get(row.id) ?? null,
     };
   });
 }
