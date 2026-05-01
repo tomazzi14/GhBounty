@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Avatar } from "./Avatar";
+import { PickWinnerModal } from "./PickWinnerModal";
+import { RejectSubmissionModal } from "./RejectSubmissionModal";
 import {
   fetchSubmissionsForBountyDetailed,
   type EnrichedSubmission,
 } from "@/lib/data";
+import { useAuth } from "@/lib/auth-context";
 import type { Bounty } from "@/lib/types";
 
 /**
@@ -15,9 +18,10 @@ import type { Bounty } from "@/lib/types";
  * to reject" hint when the score is below the bounty's
  * `reject_threshold`.
  *
- * Read-only for now: the company sees the data and can click through to
- * GitHub. Approve / reject actions live in a follow-up ticket once the
- * scoring pipeline (Opus + GenLayer) actually fills in scores.
+ * GHB-83 + GHB-84: each card now has two action buttons — "Reject" (DB
+ * only, opens a feedback textarea) and "Select winner" (signs
+ * resolve_bounty on-chain via Privy). Both are gated on the bounty
+ * still being open AND the submission not already being decided.
  */
 
 export function SubmissionsListModal({
@@ -27,11 +31,19 @@ export function SubmissionsListModal({
   bounty: Bounty;
   onClose: () => void;
 }) {
+  const { user } = useAuth();
   const [items, setItems] = useState<EnrichedSubmission[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pickFor, setPickFor] = useState<EnrichedSubmission | null>(null);
+  const [rejectFor, setRejectFor] = useState<EnrichedSubmission | null>(null);
+  // Bumped after every successful pick/reject so we re-fetch the
+  // submissions list (the EnrichedSubmission rows carry the review state
+  // we want to render on the cards).
+  const [refreshTick, setRefreshTick] = useState(0);
 
   // Lock body scroll + ESC handler. No "busy" gating because nothing
-  // here mutates state we'd lose by closing.
+  // here mutates state we'd lose by closing the OUTER modal — the inner
+  // modals (PickWinner / Reject) own their own busy-locks.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -62,7 +74,34 @@ export function SubmissionsListModal({
     return () => {
       cancelled = true;
     };
-  }, [bounty.id, bounty.rejectThreshold]);
+  }, [bounty.id, bounty.rejectThreshold, refreshTick]);
+
+  // A bounty is "settled" once any submission is the winner OR the
+  // bounty's status reflects a payout/cancellation. Both action buttons
+  // disappear from every card in that case — no second pick allowed.
+  const hasWinner = items?.some((s) => s.state === "winner") ?? false;
+  const settledStatus =
+    bounty.status === "approved" ||
+    bounty.status === "paid" ||
+    bounty.status === "closed";
+  const settled = hasWinner || settledStatus;
+
+  // Gate the action buttons on the viewer being the bounty creator. A
+  // dev who somehow opens this modal (unlikely; the entry point is the
+  // company dashboard) never sees Pick/Reject.
+  const isOwner =
+    !!user && user.role === "company" && user.id === bounty.companyId;
+  const canAct = isOwner && !settled;
+
+  const onPickWinner = useCallback((s: EnrichedSubmission) => {
+    setPickFor(s);
+  }, []);
+  const onReject = useCallback((s: EnrichedSubmission) => {
+    setRejectFor(s);
+  }, []);
+  const bumpRefresh = useCallback(() => {
+    setRefreshTick((t) => t + 1);
+  }, []);
 
   if (typeof document === "undefined") return null;
   return createPortal(
@@ -112,7 +151,13 @@ export function SubmissionsListModal({
         ) : (
           <ul className="submissions-list">
             {items.map((s) => (
-              <SubmissionCard key={s.id} submission={s} />
+              <SubmissionCard
+                key={s.id}
+                submission={s}
+                canAct={canAct}
+                onPickWinner={onPickWinner}
+                onReject={onReject}
+              />
             ))}
           </ul>
         )}
@@ -123,18 +168,64 @@ export function SubmissionsListModal({
           </button>
         </div>
       </div>
+
+      {pickFor && (
+        <PickWinnerModal
+          bounty={bounty}
+          submission={pickFor}
+          onClose={() => setPickFor(null)}
+          onResolved={() => {
+            setPickFor(null);
+            bumpRefresh();
+          }}
+        />
+      )}
+
+      {rejectFor && user && (
+        <RejectSubmissionModal
+          submission={rejectFor}
+          reviewerUserId={user.id}
+          onClose={() => setRejectFor(null)}
+          onRejected={() => {
+            setRejectFor(null);
+            bumpRefresh();
+          }}
+        />
+      )}
     </div>,
     document.body,
   );
 }
 
-function SubmissionCard({ submission: s }: { submission: EnrichedSubmission }) {
+function SubmissionCard({
+  submission: s,
+  canAct,
+  onPickWinner,
+  onReject,
+}: {
+  submission: EnrichedSubmission;
+  /** When false, the action buttons disappear (bounty already settled,
+   * or the viewer isn't the bounty creator). */
+  canAct: boolean;
+  onPickWinner: (s: EnrichedSubmission) => void;
+  onReject: (s: EnrichedSubmission) => void;
+}) {
   const displayName = s.dev.username || s.dev.email || "Anonymous dev";
   const score = s.evaluation?.score ?? null;
   const isWinner = s.state === "winner";
+  const isRejected = s.review?.rejected ?? false;
+
+  // Decided submissions don't get action buttons even when the bounty is
+  // still nominally open — picking a rejected sub as winner would be
+  // weird UX, and re-rejecting an already-rejected one is no-op.
+  const showActions = canAct && !isWinner && !isRejected;
 
   return (
-    <li className="submission-card">
+    <li
+      className={`submission-card ${
+        isWinner ? "submission-card-winner" : ""
+      } ${isRejected ? "submission-card-rejected" : ""}`}
+    >
       <div className="submission-card-head">
         <div className="submission-dev">
           <Avatar src={s.dev.avatarUrl} name={displayName} size={32} />
@@ -158,7 +249,12 @@ function SubmissionCard({ submission: s }: { submission: EnrichedSubmission }) {
               ★ Winner
             </span>
           )}
-          {!isWinner && s.recommendedReject && (
+          {isRejected && (
+            <span className="submission-badge submission-badge-rejected">
+              Rejected
+            </span>
+          )}
+          {!isWinner && !isRejected && s.recommendedReject && (
             <span className="submission-badge submission-badge-reject">
               Recommended to reject
             </span>
@@ -198,6 +294,22 @@ function SubmissionCard({ submission: s }: { submission: EnrichedSubmission }) {
         </details>
       )}
 
+      {/* GHB-84: surface the company's reject feedback. We render even
+        * when the reason is null so the dev sees the rejection itself
+        * (the badge above isn't enough on its own — we want the explicit
+        * "no reason was provided" footnote). */}
+      {isRejected && (
+        <div className="submission-reject-feedback">
+          <span className="submission-reject-feedback-label">
+            Rejection feedback
+          </span>
+          <p>
+            {s.review?.rejectReason ??
+              "No reason provided by the company."}
+          </p>
+        </div>
+      )}
+
       <div className="submission-card-foot">
         <span className="submission-time">
           {timeAgo(s.createdAt)}
@@ -208,14 +320,34 @@ function SubmissionCard({ submission: s }: { submission: EnrichedSubmission }) {
             </>
           )}
         </span>
-        <a
-          href={s.prUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn btn-ghost btn-sm"
-        >
-          View PR
-        </a>
+        <div className="submission-card-actions">
+          <a
+            href={s.prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-ghost btn-sm"
+          >
+            View PR
+          </a>
+          {showActions && (
+            <>
+              <button
+                type="button"
+                className="btn btn-reject btn-sm"
+                onClick={() => onReject(s)}
+              >
+                Reject
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => onPickWinner(s)}
+              >
+                Select winner
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </li>
   );
