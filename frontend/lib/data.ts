@@ -199,11 +199,12 @@ type IssueRow = {
     release_mode: "auto" | "assisted";
     closed_by_user: boolean;
     created_by_user_id: string | null;
+    reject_threshold: number | null;
   } | null;
 };
 
 const ISSUE_SELECT =
-  "id, pda, github_issue_url, amount, state, submission_count, created_at, bounty_meta(title, description, release_mode, closed_by_user, created_by_user_id)";
+  "id, pda, github_issue_url, amount, state, submission_count, created_at, bounty_meta(title, description, release_mode, closed_by_user, created_by_user_id, reject_threshold)";
 
 /** Parse "https://github.com/<owner>/<repo>/issues/<n>" → repo + number. */
 function parseGithubIssueUrl(url: string): { repo: string; issueNumber: number } {
@@ -259,6 +260,7 @@ function rowToBounty(row: IssueRow, submissionCount?: number): Bounty {
     ),
     releaseMode: meta?.release_mode ?? "auto",
     submissionCount: effectiveCount,
+    rejectThreshold: meta?.reject_threshold ?? null,
     createdAt: new Date(row.created_at).getTime(),
   };
 }
@@ -485,6 +487,215 @@ export async function fetchSubmissionsByDev(
   return rows.map((row) =>
     rowToSubmission(row, idByPda.get(row.issue_pda) ?? ""),
   );
+}
+
+/* ---------------------------------------------------------------- */
+/* Submissions list view (company-side review UI)                     */
+/* ---------------------------------------------------------------- */
+
+export type SubmissionScore = {
+  /** Integer 1-10, set by the relayer/Opus pipeline. Null while pending. */
+  score: number | null;
+  /** Source of the score — "opus" (Sonnet/Opus pipeline), "stub", "genlayer". */
+  source: string | null;
+  /** Free-form reasoning surfaced from the evaluator. Null for stubs. */
+  reasoning: string | null;
+};
+
+/**
+ * Submission with everything the company needs to decide what to do
+ * with each PR: dev profile, score (if evaluated), state on-chain.
+ *
+ * `recommendedReject` is computed against the bounty's `reject_threshold`
+ * — the field name is intentionally a verb / suggestion, not a hard
+ * gate. The company always has final say in `assisted` mode; the flag
+ * just steers their attention to the obvious noise.
+ */
+export type EnrichedSubmission = {
+  id: string;
+  pda: string;
+  prUrl: string;
+  prRepo: string;
+  prNumber: number;
+  state: "pending" | "scored" | "winner";
+  rank: number | null;
+  createdAt: number;
+  note: string | undefined;
+  /** Developer profile, when we can resolve it (the dev row exists). */
+  dev: {
+    id: string;
+    username: string | undefined;
+    githubHandle: string | undefined;
+    avatarUrl: string | undefined;
+    email: string | undefined;
+  };
+  evaluation: SubmissionScore | null;
+  /** `score < bounty.rejectThreshold` — only meaningful when scored. */
+  recommendedReject: boolean;
+};
+
+/**
+ * Pull the full submissions view for a single bounty (company-side
+ * review modal). Three queries, joined client-side:
+ *
+ *   1. `submissions` rows (with `submission_meta` embedded for note +
+ *      submitter id).
+ *   2. `developers` profiles for the unique solver ids.
+ *   3. `evaluations` (one per submission_pda — we surface the most
+ *      recent if multiple exist).
+ *
+ * The relayer side may not have written evaluations yet (pipeline is
+ * blocked on INFRA-1) — submissions without an evaluation come back
+ * with `evaluation: null` and the UI shows "Pending review" instead
+ * of a numeric score.
+ */
+export async function fetchSubmissionsForBountyDetailed(
+  bountyId: string,
+  rejectThreshold: number | null,
+): Promise<EnrichedSubmission[]> {
+  if (!useRealBackend) return [];
+  const supabase = createClient();
+
+  // 1. Look up the bounty's PDA (`submissions.issue_pda` is plain text,
+  //    no FK). Cheap single-row read.
+  const { data: issue, error: issueErr } = await supabase
+    .from("issues")
+    .select("pda")
+    .eq("id", bountyId)
+    .single();
+  if (issueErr || !issue) {
+    console.error("[fetchSubmissionsForBountyDetailed:issue]", issueErr);
+    return [];
+  }
+
+  // 2. Submissions with the meta row embedded (FK exists on
+  //    `submission_meta.submission_id`). Newest first.
+  // `db.types.ts` is stale — it doesn't know about the `rank` column,
+  // so we cast through `unknown` to keep TS quiet without regenerating
+  // types here. Same trick for the `evaluations` table below.
+  const { data: subs, error: subErr } = await supabase
+    .from("submissions")
+    .select(
+      "id, pda, pr_url, state, rank, created_at, submission_meta(note, submitted_by_user_id)" as string,
+    )
+    .eq("issue_pda", issue.pda)
+    .order("created_at", { ascending: false });
+  if (subErr) {
+    console.error("[fetchSubmissionsForBountyDetailed:subs]", subErr);
+    return [];
+  }
+  const subRows = (subs as unknown as Array<{
+    id: string;
+    pda: string;
+    pr_url: string;
+    state: "pending" | "scored" | "winner";
+    rank: number | null;
+    created_at: string;
+    submission_meta: {
+      note: string | null;
+      submitted_by_user_id: string | null;
+    } | null;
+  }>) ?? [];
+  if (subRows.length === 0) return [];
+
+  // 3. Resolve dev profiles in one IN query, keyed by user_id.
+  const devIds = Array.from(
+    new Set(
+      subRows
+        .map((r) => r.submission_meta?.submitted_by_user_id)
+        .filter((x): x is string => !!x),
+    ),
+  );
+  const devsById = new Map<
+    string,
+    {
+      username: string | null;
+      github_handle: string | null;
+      avatar_url: string | null;
+    }
+  >();
+  const profilesById = new Map<string, { email: string }>();
+  if (devIds.length > 0) {
+    const [{ data: devs }, { data: profs }] = await Promise.all([
+      supabase
+        .from("developers")
+        .select("user_id, username, github_handle, avatar_url")
+        .in("user_id", devIds),
+      supabase.from("profiles").select("user_id, email").in("user_id", devIds),
+    ]);
+    for (const d of devs ?? []) {
+      devsById.set(d.user_id, {
+        username: d.username ?? null,
+        github_handle: d.github_handle ?? null,
+        avatar_url: d.avatar_url ?? null,
+      });
+    }
+    for (const p of profs ?? []) {
+      profilesById.set(p.user_id, { email: p.email ?? "" });
+    }
+  }
+
+  // 4. Pull evaluations for the submission PDAs in one IN query. Keep
+  //    the newest row per submission as the "current" evaluation
+  //    (Opus may have run multiple times after retries).
+  //
+  // `evaluations` isn't in the generated `db.types.ts` yet — bypass the
+  // typed builder via an `as never` cast on the table name. Same
+  // safety as a typed query at runtime.
+  const subPdas = subRows.map((r) => r.pda);
+  const { data: evals } = await supabase
+    .from("evaluations" as never)
+    .select("submission_pda, source, score, reasoning, created_at")
+    .in("submission_pda", subPdas)
+    .order("created_at", { ascending: false });
+  const evalRows = (evals as unknown as Array<{
+    submission_pda: string;
+    source: string | null;
+    score: number | null;
+    reasoning: string | null;
+    created_at: string;
+  }>) ?? [];
+  const evalByPda = new Map<string, SubmissionScore>();
+  for (const e of evalRows) {
+    if (evalByPda.has(e.submission_pda)) continue; // newest wins
+    evalByPda.set(e.submission_pda, {
+      score: typeof e.score === "number" ? e.score : null,
+      source: e.source ?? null,
+      reasoning: e.reasoning ?? null,
+    });
+  }
+
+  return subRows.map((row) => {
+    const { prRepo, prNumber } = parseGithubPrUrl(row.pr_url);
+    const devId = row.submission_meta?.submitted_by_user_id ?? "";
+    const devProfile = devId ? devsById.get(devId) : undefined;
+    const profile = devId ? profilesById.get(devId) : undefined;
+    const evaluation = evalByPda.get(row.pda) ?? null;
+    const recommendedReject =
+      evaluation?.score != null &&
+      rejectThreshold != null &&
+      evaluation.score < rejectThreshold;
+    return {
+      id: row.id,
+      pda: row.pda,
+      prUrl: row.pr_url,
+      prRepo,
+      prNumber,
+      state: row.state,
+      rank: row.rank,
+      createdAt: new Date(row.created_at).getTime(),
+      note: row.submission_meta?.note ?? undefined,
+      dev: {
+        id: devId,
+        username: devProfile?.username ?? undefined,
+        githubHandle: devProfile?.github_handle ?? undefined,
+        avatarUrl: devProfile?.avatar_url ?? undefined,
+        email: profile?.email ?? undefined,
+      },
+      evaluation,
+      recommendedReject,
+    };
+  });
 }
 
 export async function hasDevSubmitted(

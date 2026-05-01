@@ -66,6 +66,13 @@ export type Bounty = {
    * data; treat missing as 0.
    */
   submissionCount?: number;
+  /**
+   * Score below which an evaluated submission is flagged "Recommended
+   * to reject" in the company review modal. Null = no auto-recommendation,
+   * the company triages every submission manually. Mirrors
+   * `bounty_meta.reject_threshold`.
+   */
+  rejectThreshold?: number | null;
   createdAt: number;
 };
 
