@@ -103,7 +103,7 @@ function CompanyDashboardInner() {
       <section className="dash-hero">
         <div>
           <div className="eyebrow">Company dashboard</div>
-          <h1 className="dash-title">Welcome back, {company.name}</h1>
+          <h1 className="dash-title">Welcome back, {company.name || "there"}</h1>
           <p className="dash-sub">{company.description}</p>
         </div>
         <div className="dash-stats">
