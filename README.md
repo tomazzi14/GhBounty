@@ -39,12 +39,21 @@ MVP in progress. Current focus: Phase 1 (Core MVP on Solana).
 
 ## Quick Start
 
+Prerequisites:
+
+- Node 24+
+- pnpm 10+
+- Solana CLI
+
+Run the final command from `frontend/`.
+
 ```bash
 pnpm install
-pnpm --filter frontend dev
+cp frontend/.env.example frontend/.env.local
+pnpm dev
 ```
 
-The frontend starts on `http://localhost:3000` by default. Copy any needed environment values from the package-specific `.env.example` files before running services that talk to wallets, Supabase, or the relayer.
+The frontend starts on `http://localhost:3000` by default.
 
 ## Stack
 
