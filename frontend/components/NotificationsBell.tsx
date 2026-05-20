@@ -117,6 +117,11 @@ export function NotificationsBell({ userId }: { userId: string }) {
   }
 
   async function onClearAll() {
+    const confirmed = window.confirm(
+      "Clear all notifications? This cannot be undone.",
+    );
+    if (!confirmed) return;
+
     setItems([]);
     setUnread(0);
     const supabase = createClient();
