@@ -33,6 +33,50 @@ describe("verifyPrOwnership", () => {
     expect(result).toEqual({ ok: true });
   });
 
+  it("returns ok when the PR body closes the expected issue", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          user: { login: "alice" },
+          base: { repo: { html_url: "https://github.com/acme/proj" } },
+          body: "Implements the fix.\n\nCloses #67",
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await verifyPrOwnership({
+      prUrl: "https://github.com/acme/proj/pull/42",
+      expectedGithubHandle: "alice",
+      expectedRepoUrl: "https://github.com/acme/proj",
+      expectedIssueUrl: "https://github.com/acme/proj/issues/67",
+    });
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("returns issue_mismatch when the PR body closes a different issue", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          user: { login: "alice" },
+          base: { repo: { html_url: "https://github.com/acme/proj" } },
+          body: "This solves the diff-filter bug.\n\nCloses #67",
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await verifyPrOwnership({
+      prUrl: "https://github.com/acme/proj/pull/42",
+      expectedGithubHandle: "alice",
+      expectedRepoUrl: "https://github.com/acme/proj",
+      expectedIssueUrl: "https://github.com/acme/proj/issues/70",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "issue_mismatch" });
+  });
+
   it("returns author_mismatch when login differs", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(

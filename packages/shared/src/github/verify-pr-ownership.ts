@@ -12,6 +12,8 @@ export type VerifyPrOwnershipInput = {
   expectedGithubHandle: string;
   /** Full URL like `https://github.com/owner/repo` (no trailing slash). */
   expectedRepoUrl: string;
+  /** Optional full URL like `https://github.com/owner/repo/issues/123`. */
+  expectedIssueUrl?: string | null;
   /** Optional GitHub token for higher rate limit. */
   token?: string;
 };
@@ -24,6 +26,7 @@ export type VerifyPrOwnershipResult =
         | "pr_not_found"
         | "author_mismatch"
         | "repo_mismatch"
+        | "issue_mismatch"
         | "rate_limited"
         | "invalid_url"
         | "upstream_error";
@@ -31,6 +34,12 @@ export type VerifyPrOwnershipResult =
 
 const PR_URL_RE =
   /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/;
+
+const ISSUE_URL_RE =
+  /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/;
+
+const CLOSING_KEYWORD_RE =
+  /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:(?:https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/)?#?(\d+))/gi;
 
 export async function verifyPrOwnership(
   input: VerifyPrOwnershipInput
@@ -62,7 +71,11 @@ export async function verifyPrOwnership(
 
   if (!res.ok) return { ok: false, reason: "upstream_error" };
 
-  let body: { user: { login: string } | null; base: { repo: { html_url: string } | null } | null };
+  let body: {
+    user: { login: string } | null;
+    base: { repo: { html_url: string } | null } | null;
+    body?: string | null;
+  };
   try {
     body = (await res.json()) as typeof body;
   } catch {
@@ -84,5 +97,41 @@ export async function verifyPrOwnership(
     return { ok: false, reason: "repo_mismatch" };
   }
 
+  if (input.expectedIssueUrl) {
+    const expectedIssue = parseIssueUrl(input.expectedIssueUrl);
+    if (!expectedIssue) return { ok: false, reason: "issue_mismatch" };
+
+    if (!prBodyClosesIssue(body.body ?? "", expectedIssue)) {
+      return { ok: false, reason: "issue_mismatch" };
+    }
+  }
+
   return { ok: true };
+}
+
+function parseIssueUrl(url: string): { owner: string; repo: string; number: string } | null {
+  const m = url.match(ISSUE_URL_RE);
+  if (!m) return null;
+  return { owner: m[1]!.toLowerCase(), repo: m[2]!.toLowerCase(), number: m[3]! };
+}
+
+function prBodyClosesIssue(
+  body: string,
+  expectedIssue: { owner: string; repo: string; number: string }
+): boolean {
+  for (const m of body.matchAll(CLOSING_KEYWORD_RE)) {
+    const [, owner, repo, number] = m;
+    if (number !== expectedIssue.number) continue;
+
+    // `Fixes #123` is scoped to the already-verified base repo. A fully
+    // qualified URL must point to the same repo as the bounty issue.
+    if (!owner && !repo) return true;
+    if (
+      owner?.toLowerCase() === expectedIssue.owner &&
+      repo?.toLowerCase() === expectedIssue.repo
+    ) {
+      return true;
+    }
+  }
+  return false;
 }

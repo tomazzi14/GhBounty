@@ -142,6 +142,7 @@ export async function handleSubmissionsCreate(raw: unknown) {
     prUrl: parsed.data.pr_url,
     expectedGithubHandle: auth.profile.github_handle,
     expectedRepoUrl: repoUrl,
+    expectedIssueUrl: b.github_issue_url,
     token: process.env.GITHUB_TOKEN,
   });
   if (!verify.ok) {
