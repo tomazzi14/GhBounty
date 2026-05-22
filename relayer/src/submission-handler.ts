@@ -727,6 +727,7 @@ async function checkPrOwnership(
       prUrl: sub.prUrl,
       expectedGithubHandle: ownershipCtx.githubHandle,
       expectedRepoUrl: bountyRepoUrl,
+      expectedIssueUrl: ownershipCtx.githubIssueUrl,
       token: deps.githubToken ?? undefined,
     });
   } catch (err) {
