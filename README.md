@@ -15,6 +15,21 @@ The core loop:
 5. **GenLayer** scores each dimension on-chain: 5 validators × 5 exec_prompts = 25 independent evaluations under `strict_eq` consensus.
 6. **Company** reads only the top-scored PRs (reject threshold filters noise automatically), picks **one** winner, escrow releases the payment.
 
+## Quick Start
+
+1. **Prerequisites**
+   - [Node 24+](https://nodejs.org/)
+   - [pnpm 10+](https://pnpm.io/installation)
+   - [Solana CLI](https://docs.solana.com/cli/install)
+
+2. **Install and run**
+   ```bash
+   pnpm install
+   cp frontend/.env.example frontend/.env.local
+   pnpm dev
+   ```
+   Run `pnpm dev` from the `/frontend` directory.
+
 ## Why hybrid (Opus + GenLayer)
 
 GenLayer has a practical ~256-token output ceiling per `exec_prompt`. Asking it to read a full 10K-token PR and emit a verdict is not feasible. So:
