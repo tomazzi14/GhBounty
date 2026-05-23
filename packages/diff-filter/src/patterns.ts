@@ -74,6 +74,7 @@ export const GENERATED_DIR_PREFIXES = [
   ".turbo/",
   ".vercel/",
   ".expo/",
+  ".anchor/",
   "node_modules/",
   ".pnpm-store/",
   "coverage/",

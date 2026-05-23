@@ -45,9 +45,17 @@ describe("filterDiffFiles", () => {
   });
 
   test("filters generated dirs", () => {
-    const files = [file("dist/bundle.js"), file("src/main.ts")];
+    const files = [
+      file("dist/bundle.js"),
+      file("contracts/solana/.anchor/program-logs/ghbounty_escrow.log"),
+      file("src/main.ts"),
+    ];
     const r = filterDiffFiles(files);
     expect(r.kept.map((f) => f.path)).toEqual(["src/main.ts"]);
+    expect(r.filtered.map((f) => f.reason)).toEqual([
+      "generated_dir",
+      "generated_dir",
+    ]);
   });
 
   test("maxChangedLines marks oversized files", () => {
