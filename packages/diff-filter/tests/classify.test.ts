@@ -47,6 +47,8 @@ describe("classifyPath — generated dirs", () => {
     "node_modules/foo/index.js",
     "relayer/dist/index.js",
     "app/.next/static/chunks/webpack.js",
+    ".anchor/program-logs/ghbounty_escrow.log",
+    "contracts/solana/.anchor/program-logs/ghbounty_escrow.log",
     "coverage/lcov-report/index.html",
     "__pycache__/module.cpython-311.pyc",
   ])("marks %s as generated_dir", (path) => {
