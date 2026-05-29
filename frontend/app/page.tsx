@@ -17,23 +17,24 @@ declare global {
 
 /* ---------------- icons ---------------- */
 type IconProps = { size?: number; stroke?: number };
-const makeIcon =
-  (d: string) =>
-  ({ size = 18, stroke = 1.6 }: IconProps) =>
-    (
-      <svg
-        width={size}
-        height={size}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={stroke}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d={d} />
-      </svg>
-    );
+const makeIcon = (d: string) => {
+  const Icon = ({ size = 18, stroke = 1.6 }: IconProps) => (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={stroke}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d={d} />
+    </svg>
+  );
+  Icon.displayName = "Icon";
+  return Icon;
+};
 
 const IconArrow = makeIcon("M5 12h14M13 5l7 7-7 7");
 const IconGit = makeIcon(
@@ -832,6 +833,12 @@ const TelegramIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+const XIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" {...p}>
+    <path d="M18.244 2H21.5l-7.44 8.506L23 22h-6.86l-5.37-7.02L4.6 22H1.34l7.96-9.1L1 2h7.035l4.86 6.43L18.244 2zm-1.2 18h1.88L7.05 4H5.07l11.974 16z" />
+  </svg>
+);
+
 /* ---------------- Final CTA ---------------- */
 function FinalCTA() {
   return (
@@ -860,11 +867,7 @@ function FinalCTA() {
 
 /* ---------------- Footer ---------------- */
 function Footer() {
-  const XIcon = (p: SVGProps<SVGSVGElement>) => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" {...p}>
-      <path d="M18.244 2H21.5l-7.44 8.506L23 22h-6.86l-5.37-7.02L4.6 22H1.34l7.96-9.1L1 2h7.035l4.86 6.43L18.244 2zm-1.2 18h1.88L7.05 4H5.07l11.974 16z" />
-    </svg>
-  );
+  const currentYear = new Date().getFullYear();
   return (
     <footer className="footer">
       <div>
@@ -899,7 +902,7 @@ function Footer() {
           <span>Built for</span>
           <img src="/assets/colosseumlogo.png" alt="Colosseum" />
         </a>
-        <span className="footer-copy">© 2026 GH BOUNTY · ALL RIGHTS RESERVED</span>
+        <span className="footer-copy">© {currentYear} GH BOUNTY · ALL RIGHTS RESERVED</span>
       </div>
     </footer>
   );
