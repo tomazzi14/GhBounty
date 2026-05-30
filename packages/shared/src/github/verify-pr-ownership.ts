@@ -12,6 +12,8 @@ export type VerifyPrOwnershipInput = {
   expectedGithubHandle: string;
   /** Full URL like `https://github.com/owner/repo` (no trailing slash). */
   expectedRepoUrl: string;
+  /** Optional GitHub issue URL that the PR must explicitly close/fix/resolve. */
+  expectedIssueUrl?: string;
   /** Optional GitHub token for higher rate limit. */
   token?: string;
 };
@@ -24,6 +26,7 @@ export type VerifyPrOwnershipResult =
         | "pr_not_found"
         | "author_mismatch"
         | "repo_mismatch"
+        | "issue_mismatch"
         | "rate_limited"
         | "invalid_url"
         | "upstream_error";
@@ -62,7 +65,11 @@ export async function verifyPrOwnership(
 
   if (!res.ok) return { ok: false, reason: "upstream_error" };
 
-  let body: { user: { login: string } | null; base: { repo: { html_url: string } | null } | null };
+  let body: {
+    user: { login: string } | null;
+    base: { repo: { html_url: string } | null } | null;
+    body?: string | null;
+  };
   try {
     body = (await res.json()) as typeof body;
   } catch {
@@ -84,5 +91,37 @@ export async function verifyPrOwnership(
     return { ok: false, reason: "repo_mismatch" };
   }
 
+  if (input.expectedIssueUrl && !prBodyClosesIssue(body.body ?? "", input.expectedIssueUrl)) {
+    return { ok: false, reason: "issue_mismatch" };
+  }
+
   return { ok: true };
+}
+
+const ISSUE_URL_RE =
+  /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)\/?$/i;
+const CLOSING_KEYWORDS_RE = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+/i;
+
+function prBodyClosesIssue(body: string, issueUrl: string): boolean {
+  const match = issueUrl.match(ISSUE_URL_RE);
+  if (!match) return false;
+
+  const owner = match[1]!;
+  const repo = match[2]!;
+  const issueNumber = match[3]!;
+  const escapedOwner = escapeRegExp(owner);
+  const escapedRepo = escapeRegExp(repo);
+  const escapedIssueNumber = escapeRegExp(issueNumber);
+
+  const references = [
+    `#${escapedIssueNumber}`,
+    `${escapedOwner}/${escapedRepo}#${escapedIssueNumber}`,
+    `https:\\/\\/github\\.com\\/${escapedOwner}\\/${escapedRepo}\\/issues\\/${escapedIssueNumber}\\/?`,
+  ].join("|");
+
+  return new RegExp(`${CLOSING_KEYWORDS_RE.source}(?:${references})`, "i").test(body);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
