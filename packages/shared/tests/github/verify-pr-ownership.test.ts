@@ -19,6 +19,7 @@ describe("verifyPrOwnership", () => {
         JSON.stringify({
           user: { login: "alice" },
           base: { repo: { html_url: "https://github.com/acme/proj" } },
+          body: "Fixes #42",
         }),
         { status: 200 }
       )
@@ -28,6 +29,51 @@ describe("verifyPrOwnership", () => {
       prUrl: "https://github.com/acme/proj/pull/42",
       expectedGithubHandle: "alice",
       expectedRepoUrl: "https://github.com/acme/proj",
+      expectedIssueUrl: "https://github.com/acme/proj/issues/42",
+    });
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("returns issue_mismatch when PR closes a different issue", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          user: { login: "alice" },
+          base: { repo: { html_url: "https://github.com/acme/proj" } },
+          body: "Closes #70",
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await verifyPrOwnership({
+      prUrl: "https://github.com/acme/proj/pull/99",
+      expectedGithubHandle: "alice",
+      expectedRepoUrl: "https://github.com/acme/proj",
+      expectedIssueUrl: "https://github.com/acme/proj/issues/67",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "issue_mismatch" });
+  });
+
+  it("accepts full issue URLs in closing references", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          user: { login: "alice" },
+          base: { repo: { html_url: "https://github.com/acme/proj" } },
+          body: "Resolves https://github.com/acme/proj/issues/67",
+        }),
+        { status: 200 }
+      )
+    );
+
+    const result = await verifyPrOwnership({
+      prUrl: "https://github.com/acme/proj/pull/99",
+      expectedGithubHandle: "alice",
+      expectedRepoUrl: "https://github.com/acme/proj",
+      expectedIssueUrl: "https://github.com/acme/proj/issues/67",
     });
 
     expect(result).toEqual({ ok: true });
