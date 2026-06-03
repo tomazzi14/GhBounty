@@ -47,6 +47,7 @@ export default function CompanyDashboard() {
 function CompanyDashboardInner() {
   const { user } = useAuth();
   const company = user as Company;
+  const companyName = company.name?.trim() || "there";
   const [tick, setTick] = useState(0);
   const [filter, setFilter] = useState<Filter>("all");
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -103,7 +104,7 @@ function CompanyDashboardInner() {
       <section className="dash-hero">
         <div>
           <div className="eyebrow">Company dashboard</div>
-          <h1 className="dash-title">Welcome back, {company.name}</h1>
+          <h1 className="dash-title">Welcome back, {companyName}</h1>
           <p className="dash-sub">{company.description}</p>
         </div>
         <div className="dash-stats">
