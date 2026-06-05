@@ -22,7 +22,7 @@ GenLayer has a practical ~256-token output ceiling per `exec_prompt`. Asking it 
 - **Opus (off-chain)** does the deep reasoning with long context and produces a compact report.
 - **GenLayer (on-chain)** judges each section of the report on a single dimension with a short structured output — exactly what `strict_eq` consensus needs.
 
-Result: descentralized AI jury + reproducible scores + full auditability.
+Result: decentralized AI jury + reproducible scores + full auditability.
 
 ## Status
 
