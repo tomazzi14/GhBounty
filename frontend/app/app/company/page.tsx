@@ -11,6 +11,7 @@ import { SubmissionsListModal } from "@/components/SubmissionsListModal";
 import { useAuth } from "@/lib/auth";
 import { fetchBountiesByCompany } from "@/lib/data";
 import type { Bounty, Company } from "@/lib/types";
+import { getCompanyGreeting } from "@/lib/company-greeting";
 
 type Filter = "all" | "open" | "reviewing" | "approved" | "rejected" | "paid" | "closed";
 const FILTERS: Filter[] = ["all", "open", "reviewing", "approved", "paid", "closed"];
@@ -103,7 +104,7 @@ function CompanyDashboardInner() {
       <section className="dash-hero">
         <div>
           <div className="eyebrow">Company dashboard</div>
-          <h1 className="dash-title">Welcome back, {company.name}</h1>
+          <h1 className="dash-title">{getCompanyGreeting(company.name)}</h1>
           <p className="dash-sub">{company.description}</p>
         </div>
         <div className="dash-stats">
