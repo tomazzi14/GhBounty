@@ -9,6 +9,7 @@ import { CreateBountyForm } from "@/components/CreateBountyForm";
 import { ReleaseModeBadge } from "@/components/ReleaseModePicker";
 import { SubmissionsListModal } from "@/components/SubmissionsListModal";
 import { useAuth } from "@/lib/auth";
+import { companyGreeting } from "@/lib/company-greeting";
 import { fetchBountiesByCompany } from "@/lib/data";
 import type { Bounty, Company } from "@/lib/types";
 
@@ -103,7 +104,7 @@ function CompanyDashboardInner() {
       <section className="dash-hero">
         <div>
           <div className="eyebrow">Company dashboard</div>
-          <h1 className="dash-title">Welcome back, {company.name}</h1>
+          <h1 className="dash-title">{companyGreeting(company.name)}</h1>
           <p className="dash-sub">{company.description}</p>
         </div>
         <div className="dash-stats">
