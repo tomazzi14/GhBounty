@@ -83,6 +83,7 @@ export const GENERATED_DIR_PREFIXES = [
   ".ruff_cache/",
   ".venv/",
   "venv/",
+  ".anchor/",
 ];
 
 export const GENERATED_FILE_SUFFIXES = [
