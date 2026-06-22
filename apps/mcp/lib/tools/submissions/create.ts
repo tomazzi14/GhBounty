@@ -3,7 +3,7 @@
  *
  * Lets an AI agent submit a PR on-chain as a bounty solution. Full flow:
  *   auth → role guard (dev) → delegation guard → load bounty
- *   → idempotency check → verifyPrOwnership (GHB-182 pre-check)
+ *   → idempotency check → verifyPrOwnership (GHB-182 pre-check) → verifyPrRelevance (GHB-108 pre-check)
  *   → fetch blockhash → build submit_solution tx (Task 7)
  *   → Privy signs as solver (Task 6) → SolanaGasStation signs + submits
  *   → insert mirror row in DB → return result
@@ -17,7 +17,7 @@ import { mcpError } from "@/lib/errors";
 import { getChainId } from "@/lib/config";
 import { requireRole } from "@/lib/tools/role-guard";
 import { requireWalletDelegated } from "@/lib/tools/delegation-guard";
-import { verifyPrOwnership } from "@ghbounty/shared";
+import { verifyPrOwnership, verifyPrRelevance } from "@ghbounty/shared";
 import {
   getPrivyServerClient,
   signSolanaTransaction,
@@ -154,6 +154,41 @@ export async function handleSubmissionsCreate(raw: unknown) {
         : "Forbidden";
     return {
       error: mcpError(code, `PR ownership check failed: ${verify.reason}`),
+    };
+  }
+
+  // --- PR relevance check (GHB-108) ---
+  // Verify the PR body references the bounty issue (e.g. "Fixes #67") so we
+  // don't auto-detect the wrong bounty for a PR. Soft-fail on transient errors
+  // so a rate limit doesn't block legitimate submissions.
+  const relevance = await verifyPrRelevance({
+    prUrl: parsed.data.pr_url,
+    bountyIssueUrl: b.github_issue_url,
+    token: process.env.GITHUB_TOKEN,
+  });
+  if (!relevance.ok) {
+    if (relevance.reason === "no_issue_reference") {
+      // No "Fixes #N" found in PR body — reject with a clear message so
+      // the submitter knows to update the PR body.
+      return {
+        error: mcpError(
+          "Forbidden",
+          `PR body must reference the bounty issue with "Fixes #${b.github_issue_url.split('/').pop()}" or "Closes #N". Update your PR description and retry.`
+        ),
+      };
+    }
+    if (relevance.reason === "issue_number_mismatch") {
+      return {
+        error: mcpError(
+          "Forbidden",
+          "PR body references a different issue number than the bounty. Check that your PR description references the correct issue."
+        ),
+      };
+    }
+    // rate_limited / upstream_error → ServiceUnavailable so the agent retries
+    const code = "ServiceUnavailable";
+    return {
+      error: mcpError(code, `PR relevance check failed: ${relevance.reason}`),
     };
   }
 

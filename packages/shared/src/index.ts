@@ -7,3 +7,8 @@ export type {
   VerifyPrOwnershipInput,
   VerifyPrOwnershipResult,
 } from "./github/verify-pr-ownership";
+export { verifyPrRelevance } from "./github/verify-pr-relevance";
+export type {
+  VerifyPrRelevanceInput,
+  VerifyPrRelevanceResult,
+} from "./github/verify-pr-relevance";
