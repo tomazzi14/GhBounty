@@ -49,6 +49,9 @@ describe("classifyPath — generated dirs", () => {
     "app/.next/static/chunks/webpack.js",
     "coverage/lcov-report/index.html",
     "__pycache__/module.cpython-311.pyc",
+    ".anchor/test-ledger/genesis.bin",
+    "contracts/solana/.anchor/test-ledger/genesis.bin",
+    "contracts/solana/.anchor/idl/program.json",
   ])("marks %s as generated_dir", (path) => {
     const r = classifyPath(path);
     expect(r.ignore).toBe(true);
