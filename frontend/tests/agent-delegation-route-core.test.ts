@@ -36,9 +36,28 @@ type DelegationRow =
 
 describe("delegateWallet", () => {
   test("returns ok:true on successful upsert", async () => {
+    let capturedDelegationTable: unknown;
+    let capturedProfileTable: unknown;
     const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockResolvedValue({ error: null }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "agent_delegations") {
+          return {
+            upsert: vi.fn().mockImplementation((rows: unknown) => {
+              capturedDelegationTable = rows;
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === "profiles") {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
       }),
     } as unknown as SupabaseClient<Database>;
 
@@ -48,17 +67,31 @@ describe("delegateWallet", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(supabase.from).toHaveBeenCalledWith("agent_delegations");
+    expect(capturedDelegationTable).toBeDefined();
   });
 
   test("defaults chain_type to 'solana'", async () => {
     let capturedRows: unknown;
     const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockImplementation((rows: unknown) => {
-          capturedRows = rows;
-          return Promise.resolve({ error: null });
-        }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "agent_delegations") {
+          return {
+            upsert: vi.fn().mockImplementation((rows: unknown) => {
+              capturedRows = rows;
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === "profiles") {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
       }),
     } as unknown as SupabaseClient<Database>;
 
@@ -70,11 +103,25 @@ describe("delegateWallet", () => {
   test("passes chain_type when provided", async () => {
     let capturedRows: unknown;
     const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockImplementation((rows: unknown) => {
-          capturedRows = rows;
-          return Promise.resolve({ error: null });
-        }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "agent_delegations") {
+          return {
+            upsert: vi.fn().mockImplementation((rows: unknown) => {
+              capturedRows = rows;
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === "profiles") {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
       }),
     } as unknown as SupabaseClient<Database>;
 
@@ -90,11 +137,25 @@ describe("delegateWallet", () => {
   test("sets revoked_at to null on upsert", async () => {
     let capturedRows: unknown;
     const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockImplementation((rows: unknown) => {
-          capturedRows = rows;
-          return Promise.resolve({ error: null });
-        }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "agent_delegations") {
+          return {
+            upsert: vi.fn().mockImplementation((rows: unknown) => {
+              capturedRows = rows;
+              return Promise.resolve({ error: null });
+            }),
+          };
+        }
+        if (table === "profiles") {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({ error: null }),
+              }),
+            }),
+          };
+        }
+        return {};
       }),
     } as unknown as SupabaseClient<Database>;
 
@@ -103,12 +164,90 @@ describe("delegateWallet", () => {
     expect((capturedRows as Record<string, unknown>).revoked_at).toBeNull();
   });
 
+  test("backfills profiles.wallet_pubkey on delegate", async () => {
+    let profileUpdateParams: unknown;
+    let profileEqParams: unknown;
+    let profileIsParams: unknown;
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "agent_delegations") {
+          return {
+            upsert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === "profiles") {
+          return {
+            update: vi.fn().mockImplementation((upd: unknown) => {
+              profileUpdateParams = upd;
+              return {
+                eq: vi.fn().mockImplementation((col: string, val: string) => {
+                  profileEqParams = { col, val };
+                  return {
+                    is: vi.fn().mockImplementation((col2: string, val2: unknown) => {
+                      profileIsParams = { col: col2, val: val2 };
+                      return Promise.resolve({ error: null });
+                    }),
+                  };
+                }),
+              };
+            }),
+          };
+        }
+        return {};
+      }),
+    } as unknown as SupabaseClient<Database>;
+
+    await delegateWallet(supabase, {
+      user_id: USER_ID,
+      wallet_pubkey: WALLET,
+    });
+
+    expect(profileUpdateParams).toEqual({ wallet_pubkey: WALLET });
+    expect(profileEqParams).toEqual({ col: "user_id", val: USER_ID });
+    expect(profileIsParams).toEqual({ col: "wallet_pubkey", val: null });
+  });
+
+  test("returns ok:true when profiles update fails (non-fatal)", async () => {
+    const supabase = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "agent_delegations") {
+          return {
+            upsert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === "profiles") {
+          return {
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                is: vi.fn().mockResolvedValue({ error: { message: "DB err" } }),
+              }),
+            }),
+          };
+        }
+        return {};
+      }),
+    } as unknown as SupabaseClient<Database>;
+
+    const result = await delegateWallet(supabase, {
+      user_id: USER_ID,
+      wallet_pubkey: WALLET,
+    });
+
+    // Profiles backfill is best-effort — delegation succeeds regardless
+    expect(result.ok).toBe(true);
+  });
+
   test("returns ok:false with detail on Supabase error", async () => {
     const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockResolvedValue({
-          error: { message: "FK violation" },
-        }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === "agent_delegations") {
+          return {
+            upsert: vi.fn().mockResolvedValue({
+              error: { message: "FK violation" },
+            }),
+          };
+        }
+        return {};
       }),
     } as unknown as SupabaseClient<Database>;
 
