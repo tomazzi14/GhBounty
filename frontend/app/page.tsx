@@ -899,7 +899,7 @@ function Footer() {
           <span>Built for</span>
           <img src="/assets/colosseumlogo.png" alt="Colosseum" />
         </a>
-        <span className="footer-copy">© 2026 GH BOUNTY · ALL RIGHTS RESERVED</span>
+        <span className="footer-copy">© {new Date().getFullYear()} GH BOUNTY · ALL RIGHTS RESERVED</span>
       </div>
     </footer>
   );
