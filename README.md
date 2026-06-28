@@ -125,3 +125,5 @@ cp packages/db/.env.example packages/db/.env.local
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+    Tested by @AlfinGz for issue #70
