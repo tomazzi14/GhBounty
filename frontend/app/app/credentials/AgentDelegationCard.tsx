@@ -117,7 +117,9 @@ export function AgentDelegationCard() {
   async function onAuthorize() {
     if (!solanaWallet) return;
     if (!SIGNER_ID) {
-      setError("Missing NEXT_PUBLIC_PRIVY_SIGNER_ID env var.");
+      setError(
+        "Missing NEXT_PUBLIC_PRIVY_SIGNER_ID — add it to frontend/.env.local (see .env.example).",
+      );
       return;
     }
     setError(null);

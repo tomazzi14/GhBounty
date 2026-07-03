@@ -49,6 +49,15 @@ export async function delegateWallet(
     { onConflict: "user_id" },
   );
   if (error) return { ok: false, error: "internal", detail: error.message };
+
+  // GHB-110: Backfill profiles.wallet_pubkey so MCP auth can read it.
+  // Only sets when currently null — never overwrites an existing value.
+  await supabase
+    .from("profiles")
+    .update({ wallet_pubkey: input.wallet_pubkey, updated_at: now })
+    .eq("user_id", input.user_id)
+    .is("wallet_pubkey", null);
+
   return { ok: true };
 }
 

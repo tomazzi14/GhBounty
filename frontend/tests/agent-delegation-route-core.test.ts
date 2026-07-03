@@ -35,12 +35,40 @@ type DelegationRow =
 // ---------------------------------------------------------------------------
 
 describe("delegateWallet", () => {
+  /**
+   * Helper: build a Supabase mock whose `from()` returns the right chain
+   * for "agent_delegations" (upsert) and "profiles" (update → eq → is).
+   */
+  function makeMock(opts: {
+    upsertError?: { message: string };
+    updateError?: { message: string };
+  } = {}) {
+    const upsertSpy = vi.fn().mockResolvedValue({
+      error: opts.upsertError ?? null,
+    });
+    const isSpy = vi.fn().mockResolvedValue({
+      error: opts.updateError ?? null,
+    });
+    const eqSpy = vi.fn().mockReturnValue({ is: isSpy });
+    const updateSpy = vi.fn().mockReturnValue({ eq: eqSpy });
+
+    const fromSpy = vi.fn().mockImplementation((table: string) => {
+      if (table === "profiles") {
+        return { update: updateSpy };
+      }
+      return { upsert: upsertSpy };
+    });
+
+    return { fromSpy, upsertSpy, updateSpy, eqSpy, isSpy };
+  }
+
+  function wrap(fromSpy: ReturnType<typeof makeMock>["fromSpy"]) {
+    return { from: fromSpy } as unknown as SupabaseClient<Database>;
+  }
+
   test("returns ok:true on successful upsert", async () => {
-    const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockResolvedValue({ error: null }),
-      }),
-    } as unknown as SupabaseClient<Database>;
+    const m = makeMock();
+    const supabase = wrap(m.fromSpy);
 
     const result = await delegateWallet(supabase, {
       user_id: USER_ID,
@@ -48,35 +76,22 @@ describe("delegateWallet", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(supabase.from).toHaveBeenCalledWith("agent_delegations");
+    expect(m.fromSpy).toHaveBeenCalledWith("agent_delegations");
   });
 
   test("defaults chain_type to 'solana'", async () => {
-    let capturedRows: unknown;
-    const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockImplementation((rows: unknown) => {
-          capturedRows = rows;
-          return Promise.resolve({ error: null });
-        }),
-      }),
-    } as unknown as SupabaseClient<Database>;
+    const m = makeMock();
+    const supabase = wrap(m.fromSpy);
 
     await delegateWallet(supabase, { user_id: USER_ID, wallet_pubkey: WALLET });
 
-    expect((capturedRows as Record<string, unknown>).chain_type).toBe("solana");
+    const capturedRows = m.upsertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(capturedRows.chain_type).toBe("solana");
   });
 
   test("passes chain_type when provided", async () => {
-    let capturedRows: unknown;
-    const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockImplementation((rows: unknown) => {
-          capturedRows = rows;
-          return Promise.resolve({ error: null });
-        }),
-      }),
-    } as unknown as SupabaseClient<Database>;
+    const m = makeMock();
+    const supabase = wrap(m.fromSpy);
 
     await delegateWallet(supabase, {
       user_id: USER_ID,
@@ -84,33 +99,23 @@ describe("delegateWallet", () => {
       chain_type: "ethereum",
     });
 
-    expect((capturedRows as Record<string, unknown>).chain_type).toBe("ethereum");
+    const capturedRows = m.upsertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(capturedRows.chain_type).toBe("ethereum");
   });
 
   test("sets revoked_at to null on upsert", async () => {
-    let capturedRows: unknown;
-    const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockImplementation((rows: unknown) => {
-          capturedRows = rows;
-          return Promise.resolve({ error: null });
-        }),
-      }),
-    } as unknown as SupabaseClient<Database>;
+    const m = makeMock();
+    const supabase = wrap(m.fromSpy);
 
     await delegateWallet(supabase, { user_id: USER_ID, wallet_pubkey: WALLET });
 
-    expect((capturedRows as Record<string, unknown>).revoked_at).toBeNull();
+    const capturedRows = m.upsertSpy.mock.calls[0][0] as Record<string, unknown>;
+    expect(capturedRows.revoked_at).toBeNull();
   });
 
   test("returns ok:false with detail on Supabase error", async () => {
-    const supabase = {
-      from: vi.fn().mockReturnValue({
-        upsert: vi.fn().mockResolvedValue({
-          error: { message: "FK violation" },
-        }),
-      }),
-    } as unknown as SupabaseClient<Database>;
+    const m = makeMock({ upsertError: { message: "FK violation" } });
+    const supabase = wrap(m.fromSpy);
 
     const result = await delegateWallet(supabase, {
       user_id: USER_ID,
@@ -122,6 +127,46 @@ describe("delegateWallet", () => {
       expect(result.error).toBe("internal");
       expect(result.detail).toBe("FK violation");
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // GHB-110: profiles.wallet_pubkey backfill
+  // -------------------------------------------------------------------------
+
+  test("backfills profiles.wallet_pubkey after successful delegation", async () => {
+    const m = makeMock();
+    const supabase = wrap(m.fromSpy);
+
+    await delegateWallet(supabase, { user_id: USER_ID, wallet_pubkey: WALLET });
+
+    expect(m.fromSpy).toHaveBeenCalledWith("profiles");
+    expect(m.updateSpy).toHaveBeenCalledWith({
+      wallet_pubkey: WALLET,
+      updated_at: expect.any(String),
+    });
+  });
+
+  test("scopes backfill to user_id and null wallet_pubkey only", async () => {
+    const m = makeMock();
+    const supabase = wrap(m.fromSpy);
+
+    await delegateWallet(supabase, { user_id: USER_ID, wallet_pubkey: WALLET });
+
+    expect(m.eqSpy).toHaveBeenCalledWith("user_id", USER_ID);
+    expect(m.isSpy).toHaveBeenCalledWith("wallet_pubkey", null);
+  });
+
+  test("still returns ok:true even if backfill update fails", async () => {
+    const m = makeMock({ updateError: { message: "RLS denied" } });
+    const supabase = wrap(m.fromSpy);
+
+    const result = await delegateWallet(supabase, {
+      user_id: USER_ID,
+      wallet_pubkey: WALLET,
+    });
+
+    // Delegation itself succeeded; backfill is best-effort.
+    expect(result.ok).toBe(true);
   });
 });
 
