@@ -152,6 +152,7 @@ async function persistDevRow(
       user_id: privyId,
       role: "dev",
       email: data.email || null,
+      github_handle: data.github ?? null,
       onboarding_completed: true,
     });
     if (profileErr) {
@@ -404,9 +405,15 @@ function PrivyAuthInner({ children }: { children: ReactNode }) {
       if (!current) return;
       setUser({ ...current, ...patch } as User);
 
-      const profilePatch: { email?: string | null } = {};
+      const profilePatch: { email?: string | null; github_handle?: string | null } = {};
       if (patch.email !== undefined && patch.email !== current.email) {
         profilePatch.email = patch.email || null;
+      }
+      if (current.role === "dev") {
+        const d = patch as Partial<Dev>;
+        if (d.github !== undefined) {
+          profilePatch.github_handle = d.github ?? null;
+        }
       }
       if (Object.keys(profilePatch).length > 0) {
         await supabase.from("profiles").update(profilePatch).eq("user_id", current.id);
