@@ -178,6 +178,22 @@ export async function markAllRead(
   if (error) console.warn("[markAllRead]", error);
 }
 
+/**
+ * Delete ALL notifications for the current user (read + unread).
+ * Uses the same RLS DELETE policy as markAllRead — the caller can
+ * only delete rows they own.
+ */
+export async function clearAllNotifications(
+  supabase: DBClient,
+  userId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("notifications" as never)
+    .delete()
+    .eq("user_id", userId);
+  if (error) console.warn("[clearAllNotifications]", error);
+}
+
 /* ---------------------------------------------------------------- */
 /* Writers — call from the action that produced the event.           */
 /* ---------------------------------------------------------------- */

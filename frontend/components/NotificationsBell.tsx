@@ -21,6 +21,7 @@ import { createClient } from "@/utils/supabase/client";
 import {
   fetchNotifications,
   fetchUnreadCount,
+  clearAllNotifications,
   markAllRead,
   markNotificationRead,
   type Notification,
@@ -33,6 +34,7 @@ export function NotificationsBell({ userId }: { userId: string }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -115,6 +117,15 @@ export function NotificationsBell({ userId }: { userId: string }) {
     await markAllRead(supabase, userId);
   }
 
+  async function onClearAll() {
+    // Optimistic: empty the list + badge immediately
+    setItems([]);
+    setUnread(0);
+    setConfirmingClear(false);
+    const supabase = createClient();
+    await clearAllNotifications(supabase, userId);
+  }
+
   const hasItems = items.length > 0;
   const badge = unread > 99 ? "99+" : unread > 0 ? String(unread) : null;
 
@@ -146,15 +157,45 @@ export function NotificationsBell({ userId }: { userId: string }) {
         <div className="notif-panel" role="menu">
           <div className="notif-panel-head">
             <span className="notif-panel-title">Notifications</span>
-            {unread > 0 && (
-              <button
-                type="button"
-                className="notif-mark-all"
-                onClick={onMarkAll}
-              >
-                Mark all read
-              </button>
-            )}
+            <div className="notif-actions">
+              {unread > 0 && (
+                <button
+                  type="button"
+                  className="notif-mark-all"
+                  onClick={onMarkAll}
+                >
+                  Mark all read
+                </button>
+              )}
+              {hasItems && !confirmingClear && (
+                <button
+                  type="button"
+                  className="notif-clear-all"
+                  onClick={() => setConfirmingClear(true)}
+                >
+                  Clear all
+                </button>
+              )}
+              {confirmingClear && (
+                <span className="notif-clear-confirm">
+                  Delete all?
+                  <button
+                    type="button"
+                    className="notif-clear-yes"
+                    onClick={() => void onClearAll()}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    className="notif-clear-no"
+                    onClick={() => setConfirmingClear(false)}
+                  >
+                    No
+                  </button>
+                </span>
+              )}
+            </div>}
           </div>
 
           {loading && <div className="notif-state">Loading…</div>}

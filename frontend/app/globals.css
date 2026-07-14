@@ -882,7 +882,53 @@ section { position: relative; padding: 120px 40px; }
   padding: 0;
 }
 .notif-mark-all:hover { text-decoration: underline; }
-.notif-state {
+.notif-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.notif-clear-all {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  transition: color .15s;
+}
+.notif-clear-all:hover { color: #ff6b6b; }
+.notif-clear-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.notif-clear-yes {
+  background: transparent;
+  border: 1px solid #ff6b6b;
+  color: #ff6b6b;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.notif-clear-yes:hover { background: #ff6b6b; color: #fff; }
+.notif-clear-no {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.notif-clear-no:hover { background: var(--surface-2); color: var(--text); }.notif-state {
   padding: 24px 16px;
   text-align: center;
   font-size: 12.5px;
