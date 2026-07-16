@@ -12,6 +12,8 @@ export const LOCKFILE_NAMES = new Set<string>([
   "flake.lock",
   "go.sum",
   "uv.lock",
+  "bun.lock",
+  "bun.lockb",
 ]);
 
 export const BINARY_EXTENSIONS = new Set<string>([

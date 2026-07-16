@@ -13,6 +13,8 @@ describe("classifyPath — lockfiles", () => {
     "composer.lock",
     "flake.lock",
     "uv.lock",
+    "bun.lock",
+    "bun.lockb",
     "relayer/pnpm-lock.yaml",
     "nested/deep/Cargo.lock",
   ])("marks %s as lockfile", (path) => {
