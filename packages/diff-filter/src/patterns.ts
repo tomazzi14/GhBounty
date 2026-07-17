@@ -12,6 +12,11 @@ export const LOCKFILE_NAMES = new Set<string>([
   "flake.lock",
   "go.sum",
   "uv.lock",
+  "deno.lock",
+  "pubspec.lock",
+  "Podfile.lock",
+  "packages.lock.json",
+  "gradle.lockfile",
 ]);
 
 export const BINARY_EXTENSIONS = new Set<string>([
@@ -83,6 +88,10 @@ export const GENERATED_DIR_PREFIXES = [
   ".ruff_cache/",
   ".venv/",
   "venv/",
+  ".dart_tool/",
+  ".gradle/",
+  ".parcel-cache/",
+  ".docusaurus/",
 ];
 
 export const GENERATED_FILE_SUFFIXES = [
