@@ -83,6 +83,13 @@ export const GENERATED_DIR_PREFIXES = [
   ".ruff_cache/",
   ".venv/",
   "venv/",
+  ".ipynb_checkpoints/",
+  ".tox/",
+  ".eggs/",
+  ".serverless/",
+  ".terraform/",
+  ".sass-cache/",
+  ".nyc_output/",
 ];
 
 export const GENERATED_FILE_SUFFIXES = [
@@ -104,4 +111,5 @@ export const GENERATED_FILE_SUFFIXES = [
 export const GENERATED_FILE_NAMES = new Set<string>([
   ".DS_Store",
   "Thumbs.db",
+  ".eslintcache",
 ]);

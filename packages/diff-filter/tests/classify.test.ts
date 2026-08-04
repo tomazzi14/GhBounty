@@ -56,6 +56,35 @@ describe("classifyPath — generated dirs", () => {
   });
 });
 
+describe("classifyPath — DS / infra / cache generated dirs (#152)", () => {
+  test.each([
+    ".ipynb_checkpoints/analysis-checkpoint.ipynb",
+    "notebooks/.ipynb_checkpoints/exploration-checkpoint.ipynb",
+    ".tox/py311/lib/python3.11/site-packages/pkg/__init__.py",
+    ".tox/.tox-config.ini",
+    ".eggs/pkg.egg-info/PKG-INFO",
+    ".serverless/cloudformation-template-update-stack.json",
+    ".terraform/providers/registry.terraform.io/hashicorp/aws/5.0.0/linux_amd64/terraform-provider-aws",
+    ".sass-cache/styles.css",
+    ".nyc_output/coverage-final.json",
+  ])("marks %s as generated_dir", (path) => {
+    const r = classifyPath(path);
+    expect(r.ignore).toBe(true);
+    expect(r.reason).toBe("generated_dir");
+  });
+});
+
+describe("classifyPath — cache files", () => {
+  test.each([
+    ".eslintcache",
+    "frontend/.eslintcache",
+  ])("marks %s as generated file", (path) => {
+    const r = classifyPath(path);
+    expect(r.ignore).toBe(true);
+    expect(r.reason).toBe("generated_name");
+  });
+});
+
 describe("classifyPath — generated suffixes", () => {
   test.each([
     "public/app.min.js",
