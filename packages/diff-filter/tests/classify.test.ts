@@ -63,9 +63,14 @@ describe("classifyPath — generated suffixes", () => {
     "src/bundle.js.map",
     "proto/service.pb.ts",
     "service_grpc_pb.js",
+    "proto/user_pb2.py",
+    "proto/user_pb2.pyi",
+    "services/user_pb2_grpc.py",
+    "proto/account_pb.rb",
   ])("marks %s as generated_suffix", (path) => {
     const r = classifyPath(path);
     expect(r.ignore).toBe(true);
+    expect(r.reason).toBe("generated_suffix");
   });
 });
 

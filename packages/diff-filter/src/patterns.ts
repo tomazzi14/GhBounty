@@ -99,6 +99,10 @@ export const GENERATED_FILE_SUFFIXES = [
   ".freezed.dart",
   ".generated.ts",
   ".gen.ts",
+  "_pb2.py",
+  "_pb2.pyi",
+  "_pb2_grpc.py",
+  "_pb.rb",
 ];
 
 export const GENERATED_FILE_NAMES = new Set<string>([
