@@ -32,6 +32,16 @@ describe("classifyPath — binaries", () => {
     "videos/demo.mp4",
     "pkg/app.wasm",
     "LICENSE.pdf",
+    "photos/IMG_0001.heic",
+    "design/landing.psd",
+    "releases/app-v1.0.apk",
+    "ios-build/Payload.ipa",
+    "installers/GhBounty.dmg",
+    "data/events.parquet",
+    "models/llama-7b.safetensors",
+    "models/resnet50.onnx",
+    "exports/scene.glb",
+    "assets/character.fbx",
   ])("marks %s as binary", (path) => {
     const r = classifyPath(path);
     expect(r.ignore).toBe(true);
@@ -66,6 +76,7 @@ describe("classifyPath — generated suffixes", () => {
   ])("marks %s as generated_suffix", (path) => {
     const r = classifyPath(path);
     expect(r.ignore).toBe(true);
+    expect(r.reason).toBe("generated_suffix");
   });
 });
 

@@ -60,6 +60,22 @@ export const BINARY_EXTENSIONS = new Set<string>([
   "woff",
   "woff2",
   "eot",
+  "heic",
+  "heif",
+  "psd",
+  "ai",
+  "sketch",
+  "apk",
+  "ipa",
+  "dmg",
+  "msi",
+  "parquet",
+  "safetensors",
+  "onnx",
+  "pkl",
+  "glb",
+  "fbx",
+  "blend",
 ]);
 
 export const GENERATED_DIR_PREFIXES = [
