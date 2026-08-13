@@ -54,6 +54,22 @@ describe("classifyPath — generated dirs", () => {
     expect(r.ignore).toBe(true);
     expect(r.reason).toBe("generated_dir");
   });
+
+  test.each([
+    "obj/Debug/net8.0/app.dll",
+    "zig-out/bin/app",
+    "bazel-out/k8-fastbuild/bin/app",
+    "buck-out/gen/app#headers/module",
+    ".stack-work/dist/x86_64-linux/package",
+    "dist-newstyle/build/x86_64-linux/ghc-9.6/app",
+    ".lake/build/lib/App.olean",
+    "elm-stuff/0.19.1/Main.elmi",
+    "nimcache/app_default.json",
+  ])("marks %s as generated_dir (#162 build systems)", (path) => {
+    const r = classifyPath(path);
+    expect(r.ignore).toBe(true);
+    expect(r.reason).toBe("generated_dir");
+  });
 });
 
 describe("classifyPath — generated suffixes", () => {
@@ -106,6 +122,15 @@ describe("classifyPath — Windows path separators", () => {
   test("normalizes backslashes", () => {
     const r = classifyPath("src\\components\\App.tsx");
     expect(r.ignore).toBe(false);
+  });
+
+  test("detects new lockfiles (#162)", () => {
+    const r1 = classifyPath("stack.yaml.lock");
+    expect(r1.ignore).toBe(true);
+    expect(r1.reason).toBe("lockfile");
+    const r2 = classifyPath("paket.lock");
+    expect(r2.ignore).toBe(true);
+    expect(r2.reason).toBe("lockfile");
   });
 
   test("detects lockfiles on Windows paths", () => {
