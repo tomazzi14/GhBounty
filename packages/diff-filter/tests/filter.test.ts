@@ -69,6 +69,37 @@ describe("filterDiffFiles", () => {
     expect(r.stats.filteredBytes).toBe(500);
   });
 
+  test("filters new lockfiles (Package.resolved, pdm.lock, esy.lock)", () => {
+    const r = filterDiffFiles([
+      file("src/main.swift"),
+      file("Package.resolved"),
+      file("pdm.lock"),
+      file("esy.lock"),
+    ]);
+    expect(r.kept.map((f) => f.path)).toEqual(["src/main.swift"]);
+    expect(r.filtered.map((f) => f.reason)).toEqual(["lockfile", "lockfile", "lockfile"]);
+  });
+
+  test("filters new generated dirs (Elixir, Clojure, Rust, Swift, Bun, Deno)", () => {
+    const r = filterDiffFiles([
+      file("lib/app.ex"),
+      file("_build/dev/lib/app/ebin/app.beam"),
+      file(".elixir-ls/tmp.txt"),
+      file(".clj-kondo/config.edn"),
+      file(".shadow-cljs/build.js"),
+      file("src/main.rs"),
+      file(".cargo/registry/cache.r2"),
+      file(".rust-analyzer/cache.json"),
+      file(".swiftpm/package-config.json"),
+      file("DerivedData/Build/Products/app"),
+      file(".bun/install/cache.bin"),
+      file(".deno/cache.js"),
+    ]);
+    expect(r.kept.map((f) => f.path)).toEqual(["lib/app.ex", "src/main.rs"]);
+    expect(r.filtered).toHaveLength(10);
+    expect(r.filtered.every((f) => f.reason === "generated_dir")).toBe(true);
+  });
+
   test("extraIgnoreGlobs filters custom patterns", () => {
     const r = filterDiffFiles(
       [file("proto/user.ts"), file("src/main.ts")],
