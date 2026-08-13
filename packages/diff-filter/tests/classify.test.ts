@@ -32,6 +32,21 @@ describe("classifyPath — binaries", () => {
     "videos/demo.mp4",
     "pkg/app.wasm",
     "LICENSE.pdf",
+    "lib/app.beam",
+    "compiled/utils.pyc",
+    "android/app.dex",
+    "release/app.aar",
+    "models/model.pt",
+    "models/checkpoint.pth",
+    "models/llama.gguf",
+    "models/mobilenet.tflite",
+    "models/classifier.mlmodel",
+    "data/sensor.h5",
+    "data/weights.npy",
+    "data/batch.npz",
+    "capture/trace.pcap",
+    "archive/backup.zst",
+    "archive/data.lz4",
   ])("marks %s as binary", (path) => {
     const r = classifyPath(path);
     expect(r.ignore).toBe(true);

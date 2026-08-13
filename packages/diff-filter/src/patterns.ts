@@ -60,6 +60,21 @@ export const BINARY_EXTENSIONS = new Set<string>([
   "woff",
   "woff2",
   "eot",
+  "pyc",
+  "beam",
+  "dex",
+  "aar",
+  "zst",
+  "lz4",
+  "pt",
+  "pth",
+  "gguf",
+  "tflite",
+  "mlmodel",
+  "h5",
+  "npy",
+  "npz",
+  "pcap",
 ]);
 
 export const GENERATED_DIR_PREFIXES = [
